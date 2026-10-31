@@ -1,286 +1,199 @@
 # Corretor Automático de Gabaritos V2
 
-Sistema de correção automática de provas por meio de processamento de imagens, desenvolvido para identificar respostas marcadas em cartões de gabarito, compará-las com um gabarito oficial e calcular os resultados por disciplina e da avaliação completa.
+Sistema web desenvolvido para automatizar a correção de avaliações escolares utilizando visão computacional, processamento de imagens e comparação automática de respostas.
 
-O sistema utiliza visão computacional para analisar cartões de respostas digitalizados, reduzindo a necessidade de conferência manual. Questões com marcações múltiplas ou leituras duvidosas são sinalizadas para revisão, evitando a atribuição automática de respostas sem evidência suficiente.
+A aplicação foi planejada para funcionar em um computador com uma câmera USB ou webcam, permitindo capturar cartões de respostas diretamente pelo navegador, identificar as alternativas marcadas, calcular as notas e armazenar os resultados.
 
-Este documento apresenta a arquitetura, as funcionalidades implementadas, as instruções de execução e o planejamento do sistema. As informações refletem as etapas de desenvolvimento relatadas até a Issue 03, não constituindo homologação do sistema completo.
+O objetivo é oferecer uma solução simples, rápida e organizada para o cadastro de avaliações e a correção de provas.
 
----
-
-## Tecnologias e estrutura
+## Tecnologias
 
 **Backend**
 - Python 3.14.6
-- FastAPI — desenvolvimento da API REST.
-- OpenCV — processamento de imagens e identificação de marcações.
-- PyMuPDF — leitura e conversão de arquivos PDF.
-- NumPy — manipulação de matrizes e imagens.
-- Pytest — testes automatizados.
+- FastAPI — API REST
+- OpenCV — reconhecimento de respostas
+- PyMuPDF — processamento de PDFs
+- NumPy — processamento de imagens
+- Firebase Cloud Firestore — persistência
+- Pytest — testes automatizados
 
 **Frontend**
-- HTML5 — estrutura das páginas.
-- CSS3 — estilização da interface.
-- JavaScript — interatividade e integração futura com a API.
-
-**Banco de dados planejado**
-- Firebase Cloud Firestore — persistência futura de provas, gabaritos e resultados.
+- HTML5
+- CSS3
+- JavaScript
+- API MediaDevices — acesso à webcam pelo navegador
 
 **Versionamento**
-- Git e GitHub.
+- Git e GitHub
 
-### Estrutura do projeto
+## Funcionalidades do sistema
+
+A interface terá somente duas abas principais.
+
+### 1. Avaliações
+
+Responsável pelo cadastro das avaliações e dos respectivos gabaritos oficiais.
+
+O usuário poderá:
+
+1. Informar o nome da avaliação.
+2. Ativar a câmera USB ou webcam.
+3. Posicionar o cartão com as respostas oficiais na área indicada.
+4. Capturar a imagem diretamente pelo navegador.
+5. Visualizar as alternativas reconhecidas pelo OpenCV.
+6. Conferir e corrigir manualmente as respostas, quando necessário.
+7. Confirmar o gabarito oficial e salvar a avaliação.
+8. Consultar as avaliações cadastradas.
+
+Também será disponibilizada a opção de enviar arquivos PDF, JPG ou PNG.
+
+### 2. Correção
+
+Responsável pela leitura e correção dos cartões preenchidos pelos alunos.
+
+O usuário poderá:
+
+1. Selecionar uma avaliação já cadastrada.
+2. Informar a identificação do aluno.
+3. Ativar a câmera USB.
+4. Posicionar o cartão de respostas na área indicada.
+5. Capturar a imagem.
+6. Executar o reconhecimento das alternativas.
+7. Comparar as respostas com o gabarito oficial da avaliação.
+8. Visualizar acertos, erros, questões em branco, pendências e nota.
+9. Conferir o resultado e confirmar o salvamento no Firebase.
+
+O sistema não deverá salvar automaticamente uma correção sem confirmação.
+
+## Captura de imagens pela webcam
+
+A aplicação utilizará a câmera conectada ao computador, sem exigir que o usuário salve uma fotografia manualmente no dispositivo.
+
+O navegador solicitará autorização para acessar a câmera e exibirá uma visualização ao vivo do cartão.
+
+### Moldura de enquadramento
+
+A interface apresentará uma moldura retangular para orientar o posicionamento correto da folha.
+
+A moldura terá três estados:
+
+| Cor | Significado |
+|---|---|
+| Vermelho | Folha não identificada ou fora da área de captura |
+| Amarelo | Folha identificada, mas com alinhamento inadequado |
+| Verde | Folha enquadrada e pronta para captura |
+
+A verificação deverá considerar a identificação dos limites da folha, o posicionamento, a inclinação e a visibilidade da área necessária à leitura.
+
+Quando necessário, o processamento deverá corrigir a perspectiva da imagem.
+
+A indicação de enquadramento adequado não substitui a validação das respostas reconhecidas.
+
+**Observação:** o reconhecimento de cartões fotografados ainda exige implementação e validação com imagens reais de webcam. Os testes anteriores foram realizados principalmente com PDFs digitais.
+
+## Modelo de avaliação
+
+O sistema utiliza inicialmente um modelo fixo de 50 questões.
+
+| Disciplina | Questões | Pontuação máxima |
+|---|---|---|
+| Português | 1–25 | 25 pontos |
+| Matemática | 26–50 | 25 pontos |
+| Total | 50 | 50 pontos |
+
+Cada questão possui cinco alternativas: A, B, C, D e E.
+
+O OpenCV classifica as leituras como:
+
+- `marcada`: uma alternativa identificada.
+- `branco`: nenhuma alternativa marcada.
+- `multipla`: mais de uma alternativa identificada.
+- `duvidosa`: marcação que exige conferência.
+
+Questões múltiplas ou duvidosas permanecem pendentes, e a correção é considerada provisória até sua revisão.
+
+## Arquitetura do sistema
 
 ```text
 corretor-gabaritos-v2/
-│
 ├── Backend/
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── routes/
 │   │   ├── services/
 │   │   │   ├── reconhecimento.py
-│   │   │   └── correcao.py
+│   │   │   ├── correcao.py
+│   │   │   └── persistencia.py
 │   │   ├── models/
 │   │   └── database/
-│   │
 │   ├── tests/
-│   │   ├── test_api.py
-│   │   ├── test_reconhecimento.py
-│   │   ├── test_pdfs_locais.py
-│   │   ├── test_correcao.py
-│   │   └── fixtures/
-│   │       └── local/
-│   │
 │   └── requirements.txt
-│
 ├── Frontend/
 │   ├── index.html
 │   ├── pages/
 │   ├── css/
-│   │   └── style.css
 │   └── js/
-│       └── script.js
-│
 ├── docs/
-│   ├── reconhecimento.md
-│   ├── validacao-pdfs-locais.md
-│   └── motor-correcao.md
-│
 ├── .gitignore
 └── README.md
 ```
 
-A organização separa o processamento, as regras de correção, as rotas da API e a interface web.
+O backend é responsável pelo processamento, pela correção e pela persistência dos dados.
 
-Os diretórios de modelos, banco de dados e frontend estão preparados para as próximas etapas e não devem ser considerados funcionalidades completas.
+O frontend será responsável por apresentar as avaliações, acessar a webcam, capturar as imagens e exibir os resultados.
 
----
+## Fluxo de funcionamento
 
-## Pré-requisitos
+**Cadastro da avaliação**
 
-Para executar o projeto localmente, são necessários:
+Câmera USB → Captura do gabarito oficial → OpenCV → Conferência das respostas → Cadastro no Firebase.
 
-- Python 3.14.6 ou versão compatível com as dependências.
-- Git.
-- PowerShell, para os comandos apresentados.
-- VS Code ou outro editor de código.
-- Acesso à internet para instalar inicialmente as bibliotecas.
+**Correção do aluno**
 
-Não é necessário configurar Firebase, Node.js ou SQL Server para executar as funcionalidades atualmente implementadas.
+Selecionar avaliação → Câmera USB → Captura do cartão → OpenCV → Comparação com gabarito oficial → Resultado → Conferência → Salvamento no Firebase.
 
-## 1. Clonar o repositório
+## Executar o backend
 
-Abra o PowerShell no diretório desejado e execute:
+### Pré-requisitos
+
+- Python e Git instalados.
+- Navegador compatível com acesso à webcam.
+- Câmera USB ou webcam para as futuras funções de captura.
+- Dependências definidas em `Backend/requirements.txt`.
+
+Clone o projeto:
 
 ```powershell
 git clone https://github.com/JoanaCostah/corretor-gabaritos-v2.git
 cd corretor-gabaritos-v2
-```
-
-Selecione a branch que contém as funcionalidades a serem executadas:
-
-```powershell
 git switch develop
-git pull --ff-only origin develop
 ```
 
-A branch `main` pode não conter as funcionalidades mais recentes durante o desenvolvimento.
-
-## 2. Preparar o backend
-
-A partir da raiz do projeto:
+Prepare o ambiente:
 
 ```powershell
 cd Backend
-python --version
 python -m venv .venv
-```
-
-Instale as dependências utilizando diretamente o interpretador do ambiente virtual:
-
-```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Essa abordagem evita depender da ativação do ambiente virtual no PowerShell.
-
-O arquivo `Backend/requirements.txt` mantém as dependências utilizadas pelo backend.
-
-Não é necessário instalar cada biblioteca manualmente quando o arquivo já está atualizado.
-
-## 3. Executar a API REST
-
-Na pasta `Backend/`, execute:
+Inicie a API:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-Por padrão, a API será disponibilizada em:
+Endereços locais:
 
 - API: http://127.0.0.1:8000/
-- Health: http://127.0.0.1:8000/api/health
 - Swagger: http://127.0.0.1:8000/docs
+- Health: http://127.0.0.1:8000/api/health
 
-A rota de health permite verificar se a API responde, mas não confirma o funcionamento do reconhecimento e da correção.
+O endpoint `POST /api/correcoes/processar` recebe um cartão PDF/JPG/PNG e um gabarito oficial explícito em JSON, realizando o processamento e retornando o resultado.
 
-**Situação atual:** a API básica está implementada. Os serviços de reconhecimento e correção ainda não estão integrados a um endpoint de envio e correção de provas.
+As instruções específicas de configuração do Firestore estão em `docs/firebase.md`.
 
-Mantenha o terminal aberto enquanto utilizar a API.
-
-## 4. Reconhecimento de cartões com OpenCV
-
-O módulo `Backend/app/services/reconhecimento.py` realiza a leitura e identificação das alternativas marcadas.
-
-### Formatos de entrada
-
-O reconhecimento aceita:
-
-- PDF.
-- JPG.
-- PNG.
-
-Para PDFs, o processamento utiliza a primeira página do documento.
-
-O modelo inicialmente validado contém 50 questões, divididas em:
-
-| Disciplina | Questões | Alternativas |
-|---|---|---|
-| Português | 1 a 25 | A, B, C, D, E |
-| Matemática | 26 a 50 | A, B, C, D, E |
-| Total | 50 | Cinco por questão |
-
-### Processamento das imagens
-
-O fluxo de reconhecimento compreende:
-
-1. Leitura e conversão do arquivo em imagem.
-2. Conversão para escala de cinza.
-3. Aplicação de binarização.
-4. Identificação da estrutura do cartão de respostas.
-5. Localização das células ou áreas de marcação.
-6. Análise da quantidade de tinta.
-7. Identificação da alternativa selecionada.
-8. Classificação de respostas sem marcação ou inconsistentes.
-
-A implementação contempla cartões com células retangulares e marcações em X, preservando o suporte anterior ao reconhecimento circular.
-
-### Estados de reconhecimento
-
-| Estado | Significado |
-|---|---|
-| `marcada` | Uma alternativa identificada |
-| `branco` | Nenhuma alternativa identificada |
-| `multipla` | Mais de uma alternativa marcada |
-| `duvidosa` | Leitura sem confiança suficiente |
-
-Respostas múltiplas ou duvidosas não devem receber uma alternativa presumida.
-
-### Validação com documentos reais
-
-Foram utilizados dois arquivos de referência:
-
-**Gabarito em Branco.pdf**
-- 50 questões identificadas.
-- 50 respostas classificadas como em branco.
-
-**Gabarito Prova AIB.pdf**
-- 50 alternativas reconhecidas.
-- Marcações conferidas visualmente.
-- Nenhuma questão múltipla ou duvidosa no documento testado.
-
-O documento preenchido é utilizado apenas como referência de reconhecimento, não como gabarito oficial.
-
-Os arquivos locais de referência devem permanecer em:
-
-```text
-Backend/tests/fixtures/local/
-```
-
-Essa pasta deve estar ignorada pelo Git para evitar o envio de documentos privados ao repositório.
-
-A validação realizada não comprova o desempenho com fotografias, sombras, rasuras, rotações ou outras variações de captura.
-
-Mais informações estão disponíveis em `docs/reconhecimento.md` e `docs/validacao-pdfs-locais.md`.
-
-## 5. Motor de correção automática
-
-O módulo `Backend/app/services/correcao.py` realiza a comparação das respostas reconhecidas com um gabarito oficial informado explicitamente.
-
-O motor é independente da API REST, do frontend e do banco de dados.
-
-### Regras de correção
-
-- A prova contém 50 questões.
-- Cada questão vale um ponto.
-- Português possui pontuação máxima de 25 pontos.
-- Matemática possui pontuação máxima de 25 pontos.
-- A pontuação máxima geral é de 50 pontos.
-- O gabarito oficial deve conter exatamente 50 alternativas válidas.
-- As alternativas permitidas são A, B, C, D e E.
-
-O resultado contempla:
-
-- Acertos.
-- Erros.
-- Questões em branco.
-- Marcações múltiplas.
-- Leituras duvidosas.
-- Pontuação por disciplina.
-- Pontuação geral.
-- Percentuais de acerto.
-- Pendências de conferência.
-
-### Resultados provisórios
-
-Questões múltiplas ou duvidosas permanecem pendentes de revisão.
-
-Enquanto houver pendências, o resultado será identificado como provisório.
-
-Exemplo:
-
-| Indicador | Resultado |
-|---|---|
-| Acertos | 49 |
-| Questões múltiplas | 1 |
-| Pontuação contabilizada | 49/50 |
-| Percentual | 98% |
-| Situação | Provisório |
-
-A pontuação contabilizada não deve ser confundida com uma nota definitivamente confirmada quando existirem pendências.
-
-### Gabarito oficial
-
-O sistema exige o fornecimento explícito das respostas corretas.
-
-O arquivo `Gabarito Prova AIB.pdf` não é utilizado automaticamente como chave oficial.
-
-A autenticidade do gabarito deverá ser garantida por um processo externo ao motor nesta etapa.
-
-As regras e os contratos completos estão documentados em `docs/motor-correcao.md`.
-
-## 6. Executar os testes automatizados
+## Testes automatizados
 
 Na pasta `Backend/`, execute:
 
@@ -288,132 +201,65 @@ Na pasta `Backend/`, execute:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-De acordo com o relatório de conclusão da Issue 03:
+Último resultado informado, ao concluir a Issue 05:
 
-| Etapa | Testes aprovados |
-|---|---:|
-| Issue 02 — API e reconhecimento | 23 |
-| Issue 03 — Novos testes do motor | 40 |
-| Total após a Issue 03 | 63 |
+- 130 testes aprovados.
+- 1 teste ignorado por ausência do Firestore Emulator.
+- 0 testes reprovados.
 
-**Último resultado relatado:** 63 aprovados, 0 ignorados e 0 reprovados.
+Os testes não comprovam ainda o funcionamento completo da interface, da webcam USB ou do fluxo integrado com o Firestore Emulator.
 
-Permaneceu um aviso preexistente relacionado ao Starlette/TestClient.
+## Etapas de desenvolvimento
 
-Os testes verificam os comportamentos implementados, mas não substituem uma validação completa da aplicação web com usuários e documentos variados.
-
-## 7. Estrutura de desenvolvimento com Git
-
-O projeto utiliza branches separadas para organizar a implementação.
-
-| Branch | Responsabilidade |
-|---|---|
-| `main` | Versão estável |
-| `develop` | Integração das funcionalidades |
-| `feature/01-api-basica` | API REST inicial |
-| `feature/02-opencv` | Reconhecimento de respostas |
-| `feature/03-motor-correcao` | Motor de correção |
-
-As Issues 01 e 02 foram integradas à `develop`.
-
-A Issue 03 foi implementada, mas sua integração deve ser confirmada no histórico do Git, pois o último relatório do Codex foi emitido antes do commit e do push.
-
-### Fluxo recomendado
-
-Para iniciar uma nova funcionalidade, utilize a `develop` atualizada:
-
-```powershell
-git switch develop
-git pull --ff-only origin develop
-git switch -c feature/nome-da-funcionalidade
-```
-
-Após a implementação e validação, revise os arquivos alterados, crie o commit e envie a branch ao GitHub.
-
-A integração deverá ocorrer após revisão, preferencialmente por Pull Request.
-
-Não desenvolva funcionalidades diretamente na `main`.
-
-## 8. Próximas etapas do desenvolvimento
-
-| Issue | Funcionalidade | Situação |
+| Issue | Descrição | Situação |
 |---|---|---|
-| 01 | API REST básica | Implementada |
-| 02 | Reconhecimento OpenCV | Implementada e validada |
-| 03 | Motor de correção | Implementada e testada |
-| 04 | API de envio e correção de provas | Planejada |
-| 05 | Persistência com Firebase | Planejada |
-| 06 | Interface web | Planejada |
+| 01 | Estrutura inicial da API REST | Concluída |
+| 02 | Reconhecimento de respostas com OpenCV | Concluída |
+| 03 | Motor de correção automática | Concluída |
+| 04 | Integração do reconhecimento à API | Concluída |
+| 05 | Persistência com Firebase Firestore | Implementada; integração e validação no emulador a confirmar |
+| 06 | Interface web e câmera USB | Planejada / em desenvolvimento |
 
-### Issue 04 — Integração com API REST
+### Próximas validações
 
-Integrar o reconhecimento OpenCV e o motor de correção ao FastAPI.
+- Integração entre frontend e endpoints do backend.
+- Cadastro de avaliações a partir de imagens de gabaritos oficiais.
+- Acesso e captura pela webcam USB.
+- Detecção da folha e moldura de enquadramento.
+- Correção de perspectiva e reconhecimento de fotografias.
+- Consulta e persistência de resultados pelo Firebase.
+- Testes completos com cartões reais em diferentes condições de iluminação.
 
-A API deverá permitir o envio de arquivos, o fornecimento do gabarito oficial e a obtenção do resultado em JSON.
+## Interface visual
 
-### Issue 05 — Persistência com Firebase
+A interface seguirá como referência o padrão visual do sistema SENAI apresentado durante o planejamento.
 
-Implementar o armazenamento de provas, gabaritos oficiais e resultados de correção utilizando Cloud Firestore.
+Características principais:
 
-A persistência deverá preservar os resultados e permitir consultas posteriores.
+- Tema escuro, com fundo azul-marinho.
+- Menu lateral contendo apenas **Avaliações** e **Correção**.
+- Campos e cartões com bordas arredondadas.
+- Botões e elementos de destaque em azul.
+- Tipografia clara e legível.
+- Layout organizado para computadores.
+- Área de visualização da webcam com moldura de enquadramento.
 
-### Issue 06 — Interface web
+A interface será funcional e objetiva, sem dashboards, gráficos, relatórios ou páginas desnecessárias nesta versão.
 
-Desenvolver inicialmente três áreas:
+## Limitações
 
-- **Provas:** cadastro das avaliações e dos gabaritos oficiais.
-- **Correção:** envio dos cartões de respostas e apresentação de pendências.
-- **Resultados:** consulta das correções e notas.
+O reconhecimento foi validado com dois PDFs reais do modelo de cartão utilizado no projeto.
 
-O frontend consumirá os endpoints disponibilizados pela API REST.
+O funcionamento com webcam depende de testes adicionais para garantir confiabilidade em fotografias, variações de iluminação, inclinação e perspectiva.
 
-## 9. Problemas frequentes
+O modelo inicial é restrito a 50 questões, com cinco alternativas por questão.
 
-| Sintoma | Verificação |
-|---|---|
-| Python não reconhecido | Confirmar instalação e caminho do interpretador |
-| Ambiente virtual incorreto | Utilizar `Backend/.venv/Scripts/python.exe` |
-| Erro ao importar FastAPI | Instalar as dependências do `requirements.txt` |
-| API não inicia | Conferir a pasta atual e o comando Uvicorn |
-| Porta 8000 ocupada | Encerrar o processo anterior ou definir outra porta |
-| Swagger indisponível | Confirmar que a API está em execução |
-| PDF não reconhecido | Conferir formato, integridade e compatibilidade do cartão |
-| Respostas incorretas | Verificar grade, qualidade do arquivo e parâmetros de detecção |
-| Questões duvidosas | Realizar conferência manual |
-| Gabarito inválido | Informar exatamente 50 alternativas válidas |
-| Testes não encontrados | Executar Pytest a partir de `Backend/` |
-| Código não aparece na `main` | Conferir se a funcionalidade está na `develop` ou em uma branch de feature |
+A aplicação ainda está em desenvolvimento. A implementação e os testes dos módulos não equivalem à homologação do sistema web completo.
 
-## 10. Limitações atuais
+## Repositório
 
-O sistema ainda está em desenvolvimento.
-
-As principais limitações são:
-
-- Reconhecimento validado apenas com os dois PDFs digitais de referência.
-- Ausência de validação ampla com fotografias e cartões danificados.
-- Modelo fixo de 50 questões com alternativas A–E.
-- Motor de correção sem autenticação do gabarito oficial.
-- Ausência de endpoint integrado para envio e correção de provas.
-- Persistência Firebase ainda não implementada.
-- Interface web ainda não integrada aos serviços.
-- Resultados com questões pendentes exigem conferência manual.
-
-A conclusão dos testes automatizados não equivale à homologação do sistema completo.
-
-## Referências
-
-- [Repositório GitHub](https://github.com/JoanaCostah/corretor-gabaritos-v2)
-- `docs/reconhecimento.md` — Funcionamento do reconhecimento.
-- `docs/validacao-pdfs-locais.md` — Resultados da validação com PDFs.
-- `docs/motor-correcao.md` — Regras e contratos da correção.
+[GitHub — Corretor Automático de Gabaritos V2](https://github.com/JoanaCostah/corretor-gabaritos-v2)
 
 ---
 
-## Considerações finais
-
-O Corretor Automático de Gabaritos V2 está sendo desenvolvido de forma modular e incremental, com separação entre reconhecimento de respostas, regras de correção, API REST, persistência e interface web.
-
-Até a Issue 03, o projeto possui mecanismos implementados e testados para reconhecer respostas em cartões compatíveis e calcular resultados com base em um gabarito oficial informado.
-
-As próximas etapas transformarão esses componentes em uma aplicação web integrada, com armazenamento dos resultados e utilização por meio de uma interface acessível ao usuário.
+Projeto desenvolvido com foco em automatização de processos, visão computacional, desenvolvimento de sistemas e aplicação prática de tecnologias web.
