@@ -1,0 +1,181 @@
+from copy import deepcopy
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from google.api_core.exceptions import AlreadyExists, PermissionDenied
+from google.cloud.firestore_v1 import _helpers
+import pytest
+
+from app.services.correcao import corrigir_respostas, ErroCorrecao
+from app.services.persistencia import Persistencia, ErroPersistencia, RegistroExistente
+
+
+def resultado(provisorio=False):
+    respostas = {str(i): {"resposta": "A", "estado": "marcada", "alternativas": ["A"]}
+                 for i in range(1, 51)}
+    if provisorio:
+        respostas["26"] = {"resposta": None, "estado": "multipla", "alternativas": ["A", "B"]}
+    return corrigir_respostas(respostas, {str(i): "A" for i in range(1, 51)})
+
+
+@pytest.fixture
+def banco():
+    dados = {}
+    cliente = MagicMock()
+
+    def snapshot(valor):
+        return SimpleNamespace(exists=valor is not None, to_dict=lambda: deepcopy(valor))
+
+    def colecao(nome):
+        referencia = MagicMock()
+
+        def documento(identificador):
+            ref = MagicMock()
+            def criar(valor):
+                if (nome, identificador) in dados:
+                    raise AlreadyExists("Já existe")
+                # Usa o codec real do SDK para simular o armazenamento/recuperação.
+                dados[nome, identificador] = _helpers.decode_dict(_helpers.encode_dict(valor), cliente)
+            ref.create.side_effect = criar
+            ref.get.side_effect = lambda: snapshot(dados.get((nome, identificador)))
+            return ref
+
+        referencia.document.side_effect = documento
+        referencia.stream.side_effect = lambda: (snapshot(v) for (c, _), v in dados.items() if c == nome)
+        def filtrar(*, filter):
+            consulta = MagicMock()
+            consulta.stream.side_effect = lambda: (snapshot(v) for (c, _), v in dados.items()
+                                                    if c == nome and v[filter.field_path] == filter.value)
+            return consulta
+        referencia.where.side_effect = filtrar
+        return referencia
+
+    cliente.collection.side_effect = colecao
+    return Persistencia(cliente), dados
+
+
+def test_criar_consultar_listar_provas(banco):
+    repo, _ = banco
+    assert repo.listar_provas() == []
+    prova = repo.criar_prova("  Prova 1  ", "Descrição")
+    outra = repo.criar_prova("Prova 2")
+    assert prova["id"] != outra["id"]
+    assert prova["titulo"] == "Prova 1"
+    assert isinstance(prova["criada_em"], datetime)
+    assert prova["criada_em"].utcoffset().total_seconds() == 0
+    assert repo.consultar_prova(prova["id"]) == prova
+    assert {p["id"] for p in repo.listar_provas()} == {prova["id"], outra["id"]}
+    assert repo.consultar_prova("ausente") is None
+
+
+def test_gabarito_e_protecao_contra_sobrescrita(banco):
+    repo, _ = banco
+    prova = repo.criar_prova("Teste")
+    oficial = {str(i): "A" for i in range(1, 51)}
+    assert repo.consultar_gabarito(prova["id"]) is None
+    cadastrado = repo.cadastrar_gabarito(prova["id"], oficial)
+    assert cadastrado["id"] == prova["id"]
+    oficial["1"] = "B"
+    with pytest.raises(RegistroExistente):
+        repo.cadastrar_gabarito(prova["id"], oficial)
+    assert repo.consultar_gabarito(prova["id"])["alternativas"]["1"] == "A"
+
+
+@pytest.mark.parametrize("oficial", [{}, {str(i): "A" for i in range(1, 50)},
+    {str(i): "F" for i in range(1, 51)}, {i: "A" for i in range(1, 51)}])
+def test_gabarito_invalido_nao_acessa_banco(oficial):
+    cliente = MagicMock()
+    with pytest.raises(ErroCorrecao):
+        Persistencia(cliente).cadastrar_gabarito("prova", oficial)
+    cliente.collection.assert_not_called()
+
+
+def test_prova_inexistente(banco):
+    repo, dados = banco
+    with pytest.raises(ValueError, match="Prova inexistente"):
+        repo.cadastrar_gabarito("ausente", {str(i): "A" for i in range(1, 51)})
+    with pytest.raises(ValueError, match="Prova inexistente"):
+        repo.salvar_correcao("ausente", "Aluno", resultado())
+    assert dados == {}
+
+
+def test_correcao_preserva_motor_serializa_e_filtra_por_prova(banco):
+    repo, _ = banco
+    prova, outra = repo.criar_prova("Um"), repo.criar_prova("Dois")
+    entrada = resultado()
+    antes = deepcopy(entrada)
+    correcao = repo.salvar_correcao(prova["id"], "Aluno A", entrada)
+    repo.salvar_correcao(outra["id"], "Aluno B", resultado())
+    assert entrada == antes
+    assert correcao["resultado"] == antes
+    assert correcao["situacao"] == "sem_pendencias"
+    assert repo.consultar_correcao(correcao["id"]) == correcao
+    assert repo.listar_correcoes(prova["id"]) == [correcao]
+    assert repo.listar_correcoes("inexistente") == []
+    assert repo.consultar_correcao("inexistente") is None
+    entrada["resumo"]["pontuacao"] = 0
+    assert repo.consultar_correcao(correcao["id"])["resultado"] == antes
+
+
+def test_provisorio_exige_decisao_explicita(banco):
+    repo, dados = banco
+    prova = repo.criar_prova("Provisória")
+    entrada = resultado(True)
+    with pytest.raises(ValueError, match="permitir_provisorio"):
+        repo.salvar_correcao(prova["id"], "Aluno", entrada)
+    assert len(dados) == 1
+    correcao = repo.salvar_correcao(prova["id"], "Aluno", entrada, permitir_provisorio=True)
+    assert correcao["situacao"] == "provisoria"
+    assert repo.consultar_correcao(correcao["id"])["resultado"] == entrada
+
+
+@pytest.mark.parametrize("operacao", ["criar", "consultar", "listar", "stream"])
+def test_erros_do_banco(operacao):
+    cliente = MagicMock()
+    falha = PermissionDenied("mensagem interna do banco")
+    repo = Persistencia(cliente)
+    if operacao == "stream":
+        def stream():
+            yield MagicMock()
+            raise falha
+        cliente.collection.return_value.stream.side_effect = stream
+    elif operacao == "criar":
+        cliente.collection.return_value.document.return_value.create.side_effect = falha
+    elif operacao == "consultar":
+        cliente.collection.return_value.document.return_value.get.side_effect = falha
+    else:
+        cliente.collection.return_value.stream.side_effect = falha
+    with pytest.raises(ErroPersistencia) as erro:
+        if operacao == "criar":
+            repo.criar_prova("Teste")
+        elif operacao == "consultar":
+            repo.consultar_prova("teste")
+        else:
+            repo.listar_provas()
+    assert "mensagem interna" not in str(erro.value)
+
+
+@pytest.mark.parametrize("invalido", [None, "", " ", 42])
+def test_titulo_invalido(banco, invalido):
+    with pytest.raises(ValueError):
+        banco[0].criar_prova(invalido)
+
+
+@pytest.mark.parametrize("invalido", ["a/b", "..", "", "a" * 1501])
+def test_id_invalido(banco, invalido):
+    with pytest.raises(ValueError):
+        banco[0].consultar_prova(invalido)
+
+
+@pytest.mark.parametrize("invalido", [None, {}, {"provisorio": False}, b"PDF"])
+def test_resultado_invalido(banco, invalido):
+    with pytest.raises(ValueError):
+        banco[0].salvar_correcao("prova", "Aluno", invalido)
+
+
+def test_sem_aluno_e_sem_descricao_textual(banco):
+    with pytest.raises(ValueError):
+        banco[0].salvar_correcao("prova", " ", resultado())
+    with pytest.raises(ValueError):
+        banco[0].criar_prova("Prova", descricao=b"PDF")
