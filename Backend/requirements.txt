@@ -34,6 +34,7 @@ pymupdf4llm==2.0
 pymupdf_layout==2.0
 pytest==9.2.0
 python-multipart==0.0.33
+rapidocr==3.10.0
 PyYAML==6.0.3
 starlette==1.10.0
 tabulate==0.10.0

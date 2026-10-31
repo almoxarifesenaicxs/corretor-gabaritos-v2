@@ -2,8 +2,9 @@
 
 A camada fica em `app/services/persistencia.py`, com conexão explícita em
 `app/database/firestore.py`. Não há conexão na importação dos módulos nem
-gravação automática em `POST /api/correcoes/processar`. Não foram criados
-endpoints de cadastro ou consulta. Os serviços de OpenCV e correção não mudaram.
+gravação automática em `POST /api/correcoes/processar`. As rotas adicionadas
+na Issue 06 usam essa camada e agora selecionam seu destino por `FIRESTORE_MODO`.
+Os serviços de OpenCV e o motor de correção não mudaram nesta configuração.
 
 ## Coleções e contrato
 
@@ -66,6 +67,7 @@ Em outro terminal PowerShell, defina:
 ```powershell
 $env:FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
 $env:FIREBASE_PROJECT_ID = "demo-corretor-local"
+$env:FIRESTORE_MODO = "emulador"
 ```
 
 Não inclua `http://` na variável do host. O wrapper exige endereço de loopback
@@ -127,7 +129,21 @@ Entradas inválidas e provas inexistentes levantam `ValueError` (incluindo
 preservando a exceção original como causa para diagnóstico interno. Não
 devolva essa causa diretamente em futuros endpoints HTTP.
 
-## Configuração futura de uma base real (não utilizada na validação)
+## Firestore real — ativação explícita somente para uso local
+
+As rotas de persistência leem `FIRESTORE_MODO` no backend:
+
+| Valor | Comportamento |
+| --- | --- |
+| Variável ausente ou `emulador` | Usa o emulador; exige host local e projeto `demo-*` |
+| `real` | Usa `conectar_firestore(emulador=False)`; exige projeto real, ADC e acesso HTTP local direto |
+| Vazio ou outro valor | Rejeita a configuração com HTTP 503, sem fallback |
+
+Ter credenciais configuradas não ativa a conexão real. `conectar_firestore()`
+continua sendo uma função de baixo nível cujo padrão é emulador, independentemente
+da variável de seleção das rotas. O módulo não conecta na importação nem na
+inicialização da aplicação; o cliente é aberto quando uma operação de
+persistência é solicitada.
 
 No Firebase Console, escolha o projeto e crie a base Cloud Firestore padrão
 `(default)`. Configure permissões mínimas da identidade do backend para as
@@ -149,6 +165,71 @@ nome arbitrário de arquivo de credenciais.
 Não execute a opção real para validar testes. Ela é bloqueada em processos
 Pytest. O projeto/base reais não foram acessados por esta implementação.
 
+### Ativar no PowerShell
+
+Os comandos abaixo são instruções para uso pelo responsável pelo projeto;
+**não foram executados durante a implementação**. No terminal do backend:
+
+```powershell
+cd Backend
+$env:FIRESTORE_MODO = "real"
+$env:FIREBASE_PROJECT_ID = "seu-id-real-do-projeto"
+Remove-Item Env:FIRESTORE_EMULATOR_HOST -ErrorAction SilentlyContinue
+# Apenas quando ADC depende de arquivo: use um caminho privado fora do repositório.
+$env:GOOGLE_APPLICATION_CREDENTIALS = "C:\credenciais-privadas\firebase-service-account.json"
+
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
+```
+
+Substitua os exemplos pelo ID e pelo caminho reais. A credencial deve pertencer
+a uma identidade autorizada para o projeto, com privilégios mínimos adequados.
+Se ADC já estiver configurado por outro mecanismo, não defina um caminho de
+arquivo desnecessário. Não crie chaves apenas para executar testes. Um `.env`
+não é carregado automaticamente; reinicie o backend no terminal configurado.
+
+Abra `http://127.0.0.1:8000/interface/` na mesma máquina. Leituras consultam a
+base real; cadastros/salvamentos confirmados gravam nela e podem gerar custos.
+Nenhum valor de credencial precisa ou deve ir para o frontend.
+
+### Restrição de acesso local
+
+Sem autenticação, **não publique esta API, não use `--host 0.0.0.0` e não a
+exponha por proxy, túnel ou encaminhamento de portas**. A opção
+`--no-proxy-headers` mantém o endereço do cliente associado à conexão direta.
+O backend exige, antes de abrir um cliente real:
+
+- IP remoto de loopback, obtido da conexão (`request.client`), e Host local
+  (`localhost`, `127.0.0.1` ou `::1`).
+- Ausência dos cabeçalhos `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`
+  e `X-Forwarded-Proto`.
+- Quando há `Origin`, coincidência exata de esquema, host e porta com a API.
+
+Falhas dessas condições retornam 403 sem abrir conexão com o Firestore.
+Configuração inválida ou falha na abertura do cliente retorna 503 sem expor
+caminhos ou credenciais. Não há fallback de real para emulador ou vice-versa.
+
+Essas verificações restringem o acesso, mas **não substituem autenticação e
+autorização**: processos locais ainda podem chamar a API. Um proxy que esconda
+deliberadamente sua origem não pode ser distinguido de um cliente local;
+por isso o vínculo de rede deve permanecer em loopback, sem exposição externa.
+Controles de autenticação/autorização são necessários antes de qualquer publicação.
+
+### Voltar ao emulador e executar testes
+
+Pare o backend, configure outro terminal (ou o mesmo terminal após trocar as
+variáveis) e reinicie. Use um projeto demo separado:
+
+```powershell
+$env:FIRESTORE_MODO = "emulador"
+$env:FIREBASE_PROJECT_ID = "demo-corretor-local"
+$env:FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080"
+Remove-Item Env:GOOGLE_APPLICATION_CREDENTIALS -ErrorAction SilentlyContinue
+```
+
+Para rodar a suíte sem nem mesmo acessar o emulador, remova também
+`FIRESTORE_EMULATOR_HOST` antes do Pytest. O teste específico de integração
+será ignorado; os demais usam dependências simuladas para Firestore.
+
 ## Testes e proteção de produção
 
 ```powershell
@@ -158,10 +239,16 @@ cd Backend
 .\.venv\Scripts\python.exe -m pytest tests/test_firestore_emulador.py -q
 ```
 
-Resultado local sem emulador: **130 aprovados, 1 ignorado, 0 reprovados**.
-Os 91 casos anteriores foram preservados. Permanece somente o aviso anterior
+Resultado após a configuração de modo: **187 aprovados, 1 ignorado, 0 reprovados**.
+Os casos anteriores foram preservados. Permanece somente o aviso anterior
 de depreciação do Starlette/TestClient. O teste ignorado é o ciclo completo
 contra o Firestore Emulator; não há alegação de integração real validada.
+
+Os novos testes substituem a conexão para verificar a seleção dos modos nas
+rotas, sem cliente Firebase real ou ADC. Cobrem modo padrão, valor desconhecido,
+projeto ausente/demo, conflito com host de emulador, acesso remoto, Host externo,
+origem diferente, proxy e preservação do bloqueio de produção em Pytest.
+`tests/conftest.py` e os bloqueios de `conectar_firestore` não foram removidos.
 
 Os testes unitários usam dependências simuladas e o codec real de valores
 do SDK para verificar serialização/recuperação, inclusive timestamps. Cobrem
@@ -197,4 +284,5 @@ produção é usada nos testes.
   testes em produção, proteja credenciais e configure controles de acesso,
   acompanhamento de uso e orçamento antes de habilitar uma base real.
 
-Implementação encerrada nesta issue, sem iniciar a Issue 06.
+Nenhum acesso ao Firestore real, gravação real, commit, merge ou push foi feito
+durante esta configuração.

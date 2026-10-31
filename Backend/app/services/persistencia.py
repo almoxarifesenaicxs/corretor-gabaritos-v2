@@ -101,6 +101,26 @@ class Persistencia:
     def consultar_prova(self, prova_id):
         return self._consultar("provas", prova_id)
 
+    def criar_avaliacao(self, titulo, alternativas):
+        """Cria prova e gabarito juntos, após confirmação na interface."""
+        titulo = _texto(titulo, "Título")
+        validar_gabarito(alternativas)
+        identificador = uuid4().hex
+        agora = datetime.now(timezone.utc)
+        prova = {"id": identificador, "titulo": titulo, "descricao": None, "criada_em": agora}
+        gabarito = {"id": identificador, "prova_id": identificador,
+                    "alternativas": deepcopy(alternativas), "criado_em": agora}
+        try:
+            lote = self.cliente.batch()
+            lote.create(self.cliente.collection("provas").document(identificador), prova)
+            lote.create(self.cliente.collection("gabaritos").document(identificador), gabarito)
+            lote.commit()
+            return prova
+        except AlreadyExists as erro:
+            raise RegistroExistente("Avaliação já cadastrada.") from erro
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível cadastrar a avaliação.") from erro
+
     def listar_provas(self):
         return self._listar("provas")
 
