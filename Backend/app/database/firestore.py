@@ -25,6 +25,27 @@ def validar_emulador() -> str:
     return projeto
 
 
+def validar_configuracao_real() -> str:
+    """Valida somente configuração; não carrega credenciais nem abre cliente."""
+    projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
+    if (not projeto.strip() or projeto != projeto.strip() or projeto.startswith("demo-")
+            or os.environ.get("FIRESTORE_EMULATOR_HOST")):
+        raise ValueError("Conexão real requer projeto explícito e ausência de FIRESTORE_EMULATOR_HOST.")
+    return projeto
+
+
+def usar_emulador_configurado() -> bool:
+    """Seleciona o destino das rotas; valor desconhecido falha sem fallback."""
+    modo = os.environ.get("FIRESTORE_MODO", "emulador").strip().lower()
+    if modo == "emulador":
+        validar_emulador()
+        return True
+    if modo == "real":
+        validar_configuracao_real()
+        return False
+    raise ValueError("FIRESTORE_MODO deve ser emulador ou real.")
+
+
 @contextmanager
 def conectar_firestore(*, emulador: bool = True):
     """Abre cliente somente dentro de `with`; fecha cliente e app ao sair.
@@ -37,9 +58,7 @@ def conectar_firestore(*, emulador: bool = True):
     else:
         if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
             raise ValueError("Conexão real bloqueada em testes. Use o Firestore Emulator.")
-        projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
-        if not projeto or projeto.startswith("demo-") or os.environ.get("FIRESTORE_EMULATOR_HOST"):
-            raise ValueError("Conexão real requer projeto explícito e ausência de FIRESTORE_EMULATOR_HOST.")
+        projeto = validar_configuracao_real()
 
     # Imports tardios: importar a aplicação não inicializa Firebase ou ADC.
     import firebase_admin
