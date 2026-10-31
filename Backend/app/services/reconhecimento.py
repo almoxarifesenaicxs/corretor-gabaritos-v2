@@ -20,7 +20,9 @@ def carregar_imagem(caminho: str | Path) -> np.ndarray:
         raise ErroLeitura("Formato incompatível: use PDF, JPG ou PNG.")
     try:
         if caminho.suffix.lower() == ".pdf":
-            with pymupdf.open(str(caminho)) as documento:
+            # Abrir por bytes evita manter o arquivo bloqueado no Windows se
+            # o construtor do PyMuPDF falhar antes de entrar no contexto.
+            with pymupdf.open(stream=caminho.read_bytes(), filetype="pdf") as documento:
                 if documento.needs_pass or len(documento) == 0:
                     raise ErroLeitura("PDF protegido ou sem páginas.")
                 pix = documento[0].get_pixmap(dpi=150, colorspace=pymupdf.csRGB, alpha=False)

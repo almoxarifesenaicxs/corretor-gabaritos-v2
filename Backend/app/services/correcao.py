@@ -35,6 +35,14 @@ def _validar_resposta(numero, item):
         raise ErroCorrecao(f"Questão {numero}: resposta e alternativas inconsistentes com o estado.")
 
 
+def validar_gabarito(gabarito_oficial: dict) -> None:
+    """Valida um gabarito explícito sem exigir respostas reconhecidas."""
+    _validar_questoes(gabarito_oficial, "Gabarito oficial")
+    for numero, alternativa in gabarito_oficial.items():
+        if not isinstance(alternativa, str) or alternativa not in ALTERNATIVAS:
+            raise ErroCorrecao(f"Gabarito oficial: alternativa inválida na questão {numero}.")
+
+
 def corrigir_respostas(respostas: dict, gabarito_oficial: dict) -> dict:
     """Compara o retorno do reconhecimento com um gabarito A–E de 50 questões.
 
@@ -42,10 +50,7 @@ def corrigir_respostas(respostas: dict, gabarito_oficial: dict) -> dict:
     separados. Percentuais usam todas as questões, inclusive as pendentes.
     As entradas não são modificadas e não há inferência de gabarito.
     """
-    _validar_questoes(gabarito_oficial, "Gabarito oficial")
-    for numero, alternativa in gabarito_oficial.items():
-        if not isinstance(alternativa, str) or alternativa not in ALTERNATIVAS:
-            raise ErroCorrecao(f"Gabarito oficial: alternativa inválida na questão {numero}.")
+    validar_gabarito(gabarito_oficial)
     _validar_questoes(respostas, "Respostas")
     for numero, item in respostas.items():
         _validar_resposta(numero, item)
