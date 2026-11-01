@@ -40,8 +40,17 @@ def test_interface_e_assets_preservam_api():
     html = client.get("/interface/")
     assert html.status_code == 200
     assert 'data-tab="avaliacoes"' in html.text and 'data-tab="correcao"' in html.text
-    for caminho in ["css/style.css", "js/app.mjs", "js/camera.mjs", "js/api.mjs"]:
+    assert 'id="evaluation-name"' not in html.text
+    for caminho in ["css/style.css", "js/app.mjs", "js/camera.mjs", "js/api.mjs",
+                    "js/paginas.mjs", "js/fluxo-captura.mjs", "js/revisao.mjs",
+                    "pages/avaliacoes.html", "pages/correcao.html", "pages/alunos.html",
+                    "components/captura.html"]:
         assert client.get("/interface/" + caminho).status_code == 200
+    for pagina, elemento in [("avaliacoes", "evaluation-name"),
+                             ("correcao", "student-name"), ("alunos", "student-search")]:
+        fragmento = client.get(f"/interface/pages/{pagina}.html").text
+        assert f'id="{elemento}"' in fragmento
+        assert '<nav' not in fragmento and 'id="sidebar"' not in fragmento
 
 
 def test_fluxo_avaliacao_requer_confirmacao(repo):

@@ -1,0 +1,65 @@
+<template data-slot="evaluation-fields">
+  <section id="evaluation-fields" class="card setup-card">
+    <span class="step">01</span>
+    <div class="grow">
+      <label for="evaluation-name">Nome da avaliação</label
+      ><input
+        id="evaluation-name"
+        maxlength="160"
+        placeholder="Ex.: Avaliação de Português e Matemática"
+        autocomplete="off"
+      />
+    </div>
+    <div class="setup-note">
+      25 questões de Português<br />25 questões de Matemática
+    </div>
+  </section>
+</template>
+
+<template data-slot="official-panel">
+  <section id="official-panel" class="card review-card">
+    <div class="card-heading">
+      <div>
+        <p class="eyebrow">03 · CONFERÊNCIA</p>
+        <h2>Gabarito oficial</h2>
+      </div>
+      <span id="review-count" class="tag">Aguardando leitura</span>
+    </div>
+    <div id="official-empty" class="empty-state">
+      <h3>Primeiro, reconheça o cartão</h3>
+      <p>
+        As alternativas aparecerão aqui para conferência.<br />Você pode ajustar
+        cada resposta antes de salvar.
+      </p>
+    </div>
+    <div id="official-review" hidden>
+      <p class="helper">
+        Confira todas as alternativas. Uma leitura preenchida só se torna
+        oficial após a sua confirmação.
+      </p>
+      <div id="answer-grid" class="answer-grid"></div>
+      <label class="check"
+        ><input id="confirm-official" type="checkbox" />Conferi as 50
+        alternativas e confirmo este gabarito como oficial.</label
+      ><button id="save-evaluation" class="primary wide" disabled>
+        Salvar avaliação e gabarito
+      </button>
+    </div>
+  </section>
+</template>
+
+<template data-slot="evaluation-list-panel">
+  <section id="evaluation-list-panel" class="card list-card">
+    <div class="card-heading">
+      <div>
+        <h2>Avaliações cadastradas</h2>
+      </div>
+      <button id="refresh-evaluations" class="secondary">
+        Atualizar lista ↻
+      </button>
+    </div>
+    <div id="evaluation-list" class="evaluation-list">
+      <p class="helper">Carregando avaliações…</p>
+    </div>
+  </section>
+</template>

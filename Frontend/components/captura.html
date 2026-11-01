@@ -1,0 +1,69 @@
+<template data-slot="capture-card">
+  <section class="card capture-card">
+    <div class="card-heading">
+      <div>
+        <p class="eyebrow">02 · CARTÃO DE RESPOSTAS</p>
+        <h2>Capture ou envie</h2>
+      </div>
+      <span id="source-badge" class="tag">Nenhum cartão</span>
+    </div>
+    <div class="camera-stage" id="camera-stage">
+      <div id="camera-empty" class="camera-empty">
+        <h3>Captura do cartão</h3>
+        <p>
+          Posicione o cartão sobre um fundo escuro,<br />com os quatro cantos
+          visíveis.
+        </p>
+        <button id="camera-start" class="primary">Ativar webcam</button
+        ><small>A permissão é solicitada pelo navegador.</small>
+      </div>
+      <video
+        id="camera-video"
+        autoplay
+        playsinline
+        muted
+        hidden
+        aria-label="Imagem ao vivo da webcam"
+      ></video>
+      <img id="capture-preview" hidden alt="Captura do cartão selecionado" />
+      <svg
+        id="camera-overlay"
+        viewBox="0 0 1000 1000"
+        preserveAspectRatio="none"
+        hidden
+        aria-hidden="true"
+      >
+        <rect x="240" y="60" width="520" height="880" rx="8" class="guide" />
+        <polygon id="detected-corners" points="" />
+        <path class="guide-corners" d="" />
+      </svg>
+    </div>
+    <div id="frame-status" class="frame-status vermelho" role="status" hidden>
+      Enquadramento ainda não verificado
+    </div>
+    <div class="camera-toolbar">
+      <select id="camera-select" aria-label="Selecionar câmera">
+        <option value="">Câmera padrão</option></select
+      ><button id="camera-stop" class="secondary" disabled>Desligar</button
+      ><button id="capture-button" class="primary" disabled>Fotografar</button>
+    </div>
+    <p id="capture-note" class="helper">
+      Coloque a folha inteira dentro da moldura. Ela é uma orientação visual; o
+      contorno detectado pode estar em outra posição. Use localhost ou HTTPS.
+    </p>
+    <div class="file-choice">
+      <span>ou selecione um arquivo</span
+      ><label class="file-button" for="file-input"
+        >Escolher PDF ou imagem <span aria-hidden="true">↗</span></label
+      ><input
+        id="file-input"
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png"
+        class="sr-only"
+      /><small id="file-name">PDF, JPG ou PNG · até 10 MiB</small>
+    </div>
+    <button id="process-button" class="primary wide" disabled>
+      Reconhecer as 50 respostas <span aria-hidden="true">→</span>
+    </button>
+  </section>
+</template>

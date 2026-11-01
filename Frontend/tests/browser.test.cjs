@@ -734,3 +734,45 @@ test("fluxos de avaliações e correções com câmera simulada e backend real",
     await browser.close();
   }
 });
+
+test("page fragments load before initialization and failures keep navigation disabled", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.QA_CHROME_PATH, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("**/api/avaliacoes", route => route.fulfill({ json: [] }));
+    let requested;
+    const loading = new Promise(resolve => { requested = resolve; });
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    await page.route("**/pages/correcao.html", async route => {
+      requested();
+      await pending;
+      await route.continue();
+    });
+    await page.goto(baseURL + "/interface/", { waitUntil: "commit" });
+    await loading;
+    await page.locator('[data-tab="alunos"]').waitFor();
+    assert.equal(await page.locator('[data-tab="alunos"]').isDisabled(), true);
+    assert.equal(await page.locator('#camera-start').count(), 0);
+    release();
+    await page.locator('#camera-start').waitFor();
+    await page.locator('[data-tab="correcao"]').click();
+    assert.equal(await page.locator('#correction-fields').isVisible(), true);
+    await page.locator('[data-tab="alunos"]').click();
+    assert.equal(await page.locator('#students-panel').isVisible(), true);
+    await page.locator('[data-tab="avaliacoes"]').click();
+    assert.equal(await page.locator('#evaluation-fields').isVisible(), true);
+    assert.equal(await page.locator('#camera-video').count(), 1);
+    await page.close();
+    const failed = await browser.newPage();
+    const apiCalls = [];
+    failed.on('request', request => { if (request.url().includes('/api/')) apiCalls.push(request.url()); });
+    await failed.route('**/pages/alunos.html', route => route.fulfill({ status: 404, body: '' }));
+    await failed.goto(baseURL + '/interface/');
+    await failed.locator('#message.error').waitFor();
+    assert.equal(await failed.locator('[data-tab="avaliacoes"]').isDisabled(), true);
+    assert.equal(await failed.locator('#camera-video').count(), 0);
+    assert.deepEqual(apiCalls, []);
+    await failed.close();
+  } finally { await browser.close(); }
+});
