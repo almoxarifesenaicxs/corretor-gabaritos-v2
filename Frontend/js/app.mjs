@@ -7,6 +7,8 @@ import {
 } from "./api.mjs";
 import { Camera, cameraError } from "./camera.mjs";
 import { StudentNameReader } from "./nome-aluno.mjs";
+import { Students } from "./alunos.mjs";
+import { VisualCorrection } from "./correcao-visual.mjs";
 
 const $ = (id) => document.getElementById(id);
 let tab = "avaliacoes",
@@ -21,6 +23,9 @@ let result = null,
   cameraRequest = 0;
 let processGeneration = 0;
 let namePending = false;
+let students,
+  visual,
+  visualOfficial = null;
 
 function message(text, error = false) {
   $("message").textContent = text;
@@ -36,6 +41,9 @@ function invalidateResult() {
   $("allow-provisional").checked = false;
   $("result-state").textContent = "Aguardando leitura";
   $("saved-result").hidden = true;
+  $("visual-panel").hidden = true;
+  visual?.clear();
+  visualOfficial = null;
   updateButtons();
 }
 function invalidateOfficial() {
@@ -47,9 +55,13 @@ function invalidateOfficial() {
   updateButtons();
 }
 function updateButtons() {
-  document.querySelectorAll('[data-question], input[type="checkbox"]').forEach((input) => {
-    input.disabled = busy;
-  });
+  document
+    .querySelectorAll(
+      '[data-question], [data-student-question], input[type="checkbox"]',
+    )
+    .forEach((input) => {
+      input.disabled = busy;
+    });
   $("process-button").disabled = busy || namePending || !source;
   $("save-evaluation").disabled =
     busy ||
@@ -69,11 +81,13 @@ function updateButtons() {
     $("file-input"),
     $("capture-button"),
     $("camera-select"),
+    $("student-link-select"),
   ]) {
     element.disabled =
       busy || (element.id === "capture-button" && !camera.stream);
   }
   $("camera-start").disabled = busy;
+  $("student-link-select").disabled = busy || $("student-new-homonym").checked;
   $("camera-stop").disabled = busy || (!camera.stream && !previewUrl);
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.disabled = busy;
@@ -101,18 +115,30 @@ function positionGuide() {
   const height = video.videoHeight || stage.clientHeight;
   if (!width || !height) return;
   // Margem em ambos os eixos, inclusive em câmeras em retrato.
-  const guideHeight = Math.min(880, 800 * 297 / 210 * width / height);
-  const guideWidth = guideHeight * 210 / 297 * height / width;
-  const x = (1000 - guideWidth) / 2, y = (1000 - guideHeight) / 2;
+  const guideHeight = Math.min(880, (((800 * 297) / 210) * width) / height);
+  const guideWidth = (((guideHeight * 210) / 297) * height) / width;
+  const x = (1000 - guideWidth) / 2,
+    y = (1000 - guideHeight) / 2;
   const guide = $("camera-overlay").querySelector(".guide");
-  for (const [name, value] of Object.entries({x, y, width: guideWidth, height: guideHeight})) {
+  for (const [name, value] of Object.entries({
+    x,
+    y,
+    width: guideWidth,
+    height: guideHeight,
+  })) {
     guide.setAttribute(name, value);
   }
-  const right = x + guideWidth, bottom = y + guideHeight;
-  const dx = guideWidth * 0.10, dy = guideHeight * 0.07;
-  $("camera-overlay").querySelector(".guide-corners").setAttribute("d",
-    `M${x},${y+dy}V${y}H${x+dx} M${right-dx},${y}H${right}V${y+dy} ` +
-    `M${right},${bottom-dy}V${bottom}H${right-dx} M${x+dx},${bottom}H${x}V${bottom-dy}`);
+  const right = x + guideWidth,
+    bottom = y + guideHeight;
+  const dx = guideWidth * 0.1,
+    dy = guideHeight * 0.07;
+  $("camera-overlay")
+    .querySelector(".guide-corners")
+    .setAttribute(
+      "d",
+      `M${x},${y + dy}V${y}H${x + dx} M${right - dx},${y}H${right}V${y + dy} ` +
+        `M${right},${bottom - dy}V${bottom}H${right - dx} M${x + dx},${bottom}H${x}V${bottom - dy}`,
+    );
 }
 
 function showCameraState(data) {
@@ -146,10 +172,56 @@ const camera = new Camera({
   analyze: (blob, signal) => upload("/api/capturas/analisar", blob, {}, signal),
 });
 const nameReader = new StudentNameReader({
-  field: $("student-name"), status: $("student-name-status"),
-  recognize: (file, fields, signal) => upload('/api/alunos/reconhecer-nome', file, fields, signal),
-  onChange: invalidateResult,
-  onPending: value => { namePending = value; updateButtons(); },
+  field: $("student-name"),
+  status: $("student-name-status"),
+  recognize: (file, fields, signal) =>
+    upload("/api/alunos/reconhecer-nome", file, fields, signal),
+  onChange: () => {
+    invalidateResult();
+    students?.resetSelection();
+    students?.refreshMatches();
+  },
+  onPending: (value) => {
+    namePending = value;
+    updateButtons();
+  },
+});
+students = new Students({
+  onSelect: () => {
+    $("confirm-result").checked = false;
+    $("allow-provisional").checked = false;
+    updateButtons();
+  },
+  onMessage: message,
+});
+visual = new VisualCorrection({
+  canvas: $("annotated-card"),
+  grid: $("student-answer-grid"),
+  status: $("visual-status"),
+  onReview: async (respostas) => {
+    const previous = result;
+    result = null;
+    $("confirm-result").checked = false;
+    $("allow-provisional").checked = false;
+    setBusy(true, "Recalculando conferência…");
+    try {
+      const reviewed = await jsonPost("/api/correcoes/recalcular", {
+        respostas,
+        gabarito: visualOfficial,
+      });
+      renderResult(reviewed.resultado);
+      message(
+        "Resposta revisada. Nota e marcações atualizadas. Confira e confirme novamente.",
+      );
+      return reviewed;
+    } catch (error) {
+      result = previous;
+      message(error.message, true);
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  },
 });
 
 function stopCamera() {
@@ -199,7 +271,7 @@ function setSource(file, fromCamera = false) {
   $("camera-stop").textContent = "Nova captura";
   $("camera-stop").disabled = false;
   updateButtons();
-  if (tab === 'correcao') nameReader.read(file, {captura: fromCamera});
+  if (tab === "correcao") nameReader.read(file, { captura: fromCamera });
 }
 
 async function startCamera() {
@@ -212,7 +284,8 @@ async function startCamera() {
     positionGuide();
     showOverlay(true);
     $("frame-status").hidden = false;
-    $("frame-status").textContent = "Inicializando câmera. Coloque a folha inteira dentro da moldura.";
+    $("frame-status").textContent =
+      "Inicializando câmera. Coloque a folha inteira dentro da moldura.";
     const active = await activation;
     if (!active || requestId !== cameraRequest) return;
     $("camera-empty").hidden = true;
@@ -295,16 +368,28 @@ function switchTab(next) {
   invalidateOfficial();
   tab = next;
   const isEvaluation = tab === "avaliacoes";
+  const isCorrection = tab === "correcao";
   $("evaluation-fields").hidden = !isEvaluation;
-  $("correction-fields").hidden = isEvaluation;
+  $("correction-fields").hidden = !isCorrection;
+  $("student-link-panel").hidden = !isCorrection;
+  $("capture-workspace").hidden = tab === "alunos";
+  $("students-panel").hidden = tab !== "alunos";
   $("official-panel").hidden = !isEvaluation;
-  $("result-panel").hidden = isEvaluation;
+  $("result-panel").hidden = !isCorrection;
   $("evaluation-list-panel").hidden = !isEvaluation;
-  $("page-title").textContent = isEvaluation ? "Avaliações" : "Correção";
+  $("page-title").textContent = {
+    avaliacoes: "Avaliações",
+    correcao: "Correção",
+    alunos: "Alunos",
+  }[tab];
   $("page-description").textContent = isEvaluation
     ? "Cadastre uma avaliação e confira o gabarito antes de começar."
-    : "Capture o cartão do aluno, confira o resultado e salve quando estiver pronto.";
-  $("breadcrumb").textContent = isEvaluation ? "Avaliações" : "Correção";
+    : isCorrection
+      ? "Capture o cartão do aluno, confira o resultado e salve quando estiver pronto."
+      : "Pesquise alunos e consulte as avaliações e correções salvas.";
+  $("breadcrumb").textContent = $("page-title").textContent;
+  if (tab === "alunos") students.load();
+  if (isCorrection) students.refreshMatches();
   document.title = `Corretor de Gabaritos · ${$("breadcrumb").textContent}`;
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
@@ -473,7 +558,10 @@ $("process-button").addEventListener("click", async () => {
     aluno: $("student-name").value.trim(),
   };
   if (tab === "correcao" && (!context.prova_id || !context.aluno)) {
-    message("Selecione a avaliação e informe o aluno.", true);
+    message(
+      "Selecione a avaliação e informe ou confira o nome do aluno.",
+      true,
+    );
     return;
   }
   stopCamera();
@@ -499,10 +587,14 @@ $("process-button").addEventListener("click", async () => {
       const data = await upload("/api/correcoes/processar", source, {
         gabarito: JSON.stringify(official.alternativas),
         captura: sourceIsCapture,
+        visual: true,
       });
       if (generation === processGeneration) {
-        renderResult(data);
+        renderResult(data.resultado);
         resultContext = context;
+        visualOfficial = official.alternativas;
+        $("visual-panel").hidden = false;
+        await visual.load(data);
         message("Correção concluída. O resultado ainda não foi salvo.");
       }
     }
@@ -550,6 +642,7 @@ $("save-result").addEventListener("click", async () => {
     setBusy(true, "Salvando correção…");
     const saved = await jsonPost("/api/correcoes/salvar", {
       ...resultContext,
+      ...students.saveOptions(),
       resultado: result,
       confirmado: true,
       permitir_provisorio: $("allow-provisional").checked,
@@ -560,7 +653,11 @@ $("save-result").addEventListener("click", async () => {
     message("Correção salva com sucesso.");
     // Mantém a exibição, mas impede repetir o salvamento acidentalmente.
     result = null;
+    await students.load();
+    await students.refreshMatches();
   } catch (error) {
+    if (error.details?.codigo === "aluno_ambiguo")
+      students.showAmbiguity(error.details.alunos);
     message(error.message, true);
   } finally {
     setBusy(false);

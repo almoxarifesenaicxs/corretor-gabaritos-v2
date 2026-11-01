@@ -10,6 +10,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from app.services.correcao import corrigir_respostas, validar_gabarito
 from app.services.reconhecimento import ErroLeitura, reconhecer_arquivo
 from app.services.captura import retificar_captura
+from app.services.reconhecimento import carregar_imagem
+from app.services.correcao_visual import preparar_visualizacao, classificar_questoes
 
 router = APIRouter(prefix="/api/correcoes", tags=["Correções"])
 LIMITE_UPLOAD = 10 * 1024 * 1024
@@ -48,6 +50,7 @@ def processar(
     arquivo: Annotated[UploadFile, File(description="Cartão PDF, JPG ou PNG, até 10 MiB.")],
     gabarito: Annotated[str, Form(description='JSON com as chaves "1" a "50" e alternativas A–E.')],
     captura: Annotated[bool, Form()] = False,
+    visual: Annotated[bool, Form()] = False,
 ) -> dict:
     # Rota síncrona: FastAPI executa I/O e OpenCV no pool de threads.
     try:
@@ -75,7 +78,12 @@ def processar(
                 reconhecidas = reconhecer_arquivo(caminho)
             except ErroLeitura:
                 raise HTTPException(422, "Não foi possível ler o cartão ou identificar sua grade. Verifique o arquivo e o modelo de respostas.") from None
-            return corrigir_respostas(reconhecidas, oficial)
+            resultado = corrigir_respostas(reconhecidas, oficial)
+            if visual:
+                return {"resultado": resultado, "respostas": reconhecidas,
+                        "marcacoes": classificar_questoes(reconhecidas, oficial),
+                        "visualizacao": preparar_visualizacao(carregar_imagem(caminho))}
+            return resultado
     except HTTPException:
         raise
     except Exception:

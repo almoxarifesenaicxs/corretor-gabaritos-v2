@@ -6,7 +6,9 @@ export async function request(url, options = {}) {
       typeof data?.detail === "string"
         ? data.detail
         : "Confira os campos e tente novamente.";
-    throw new Error(detail);
+    const error = new Error(data?.detail?.mensagem || detail);
+    error.details = data?.detail;
+    throw error;
   }
   return data;
 }

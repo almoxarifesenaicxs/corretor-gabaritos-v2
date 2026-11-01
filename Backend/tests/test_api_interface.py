@@ -83,7 +83,8 @@ def test_salvar_somente_apos_confirmacao(repo):
     entrada["confirmado"] = True
     repo.salvar_correcao.return_value = {"id": "correcao-1", **entrada}
     assert client.post("/api/correcoes/salvar", json=entrada).status_code == 201
-    repo.salvar_correcao.assert_called_once_with("prova-1", "Aluno", resultado, permitir_provisorio=False)
+    repo.salvar_correcao.assert_called_once_with("prova-1", "Aluno", resultado, permitir_provisorio=False,
+                                               vincular_aluno=True, novo_homonimo=False)
 
 
 def test_salvar_provisorio_exige_aceite_no_servico_real(repo):

@@ -3,6 +3,9 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import hashlib
+import unicodedata
+from difflib import SequenceMatcher
 from uuid import uuid4
 
 from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
@@ -19,6 +22,12 @@ class RegistroExistente(ValueError):
     """Tentativa de sobrescrever um registro existente."""
 
 
+class AlunosAmbiguos(ValueError):
+    def __init__(self, alunos):
+        super().__init__("Mais de um aluno possui esse nome. Confirme o cadastro correto.")
+        self.alunos = [{"id": a["id"], "nome": a["nome"]} for a in alunos]
+
+
 def _texto(valor, nome):
     if not isinstance(valor, str) or not valor.strip():
         raise ValueError(f"{nome} deve ser um texto não vazio.")
@@ -30,6 +39,15 @@ def _id(valor):
     if "/" in valor or valor in {".", ".."} or len(valor.encode("utf-8")) > 1500:
         raise ValueError("Identificador inválido.")
     return valor
+
+
+def normalizar_nome(nome):
+    return unicodedata.normalize("NFC", " ".join(_texto(nome, "Nome").split())).casefold()
+
+
+def chave_busca(nome):
+    return "".join(c for c in unicodedata.normalize("NFKD", normalizar_nome(nome))
+                   if not unicodedata.combining(c))
 
 
 def _validar_resultado(resultado):
@@ -142,7 +160,8 @@ class Persistencia:
     def consultar_gabarito(self, prova_id):
         return self._consultar("gabaritos", prova_id)
 
-    def salvar_correcao(self, prova_id, aluno, resultado, *, permitir_provisorio=False):
+    def salvar_correcao(self, prova_id, aluno, resultado, *, permitir_provisorio=False, aluno_id=None,
+                        vincular_aluno=False, novo_homonimo=False):
         aluno = _texto(aluno, "Aluno")
         _validar_resultado(resultado)
         if type(permitir_provisorio) is not bool:
@@ -150,12 +169,25 @@ class Persistencia:
         if resultado["provisorio"] and not permitir_provisorio:
             raise ValueError("Resultado provisório exige permitir_provisorio=True explícito.")
         prova_id = self._exigir_prova(prova_id)
+        if vincular_aluno:
+            return self._salvar_com_aluno(prova_id, aluno, resultado, aluno_id, novo_homonimo)
+        vinculo = {}
+        if aluno_id is not None:
+            aluno_id = _id(aluno_id)
+            cadastrado = self.consultar_aluno(aluno_id)
+            if cadastrado is None:
+                raise ValueError("Aluno inexistente.")
+            if normalizar_nome(aluno) != normalizar_nome(cadastrado["nome"]):
+                raise ValueError("Nome não corresponde ao aluno selecionado.")
+            aluno = cadastrado["nome"]
+            vinculo["aluno_id"] = aluno_id
         identificador = uuid4().hex
         return self._criar("correcoes", identificador, {
             "id": identificador, "prova_id": prova_id, "aluno": aluno,
             "resultado": deepcopy(resultado),
             "situacao": "provisoria" if resultado["provisorio"] else "sem_pendencias",
             "processada_em": datetime.now(timezone.utc),
+            **vinculo,
         })
 
     def consultar_correcao(self, correcao_id):
@@ -163,3 +195,95 @@ class Persistencia:
 
     def listar_correcoes(self, prova_id):
         return self._listar("correcoes", prova_id)
+
+    def cadastrar_aluno(self, nome):
+        dados = self._dados_aluno(nome)
+        return self._criar("alunos", dados["id"], dados)
+
+    def _dados_aluno(self, nome, *, novo_homonimo=False):
+        nome = unicodedata.normalize("NFC", " ".join(_texto(nome, "Nome").split()))
+        if len(nome) > 200 or not any(c.isalpha() for c in nome):
+            raise ValueError("Nome inválido: use até 200 caracteres e inclua letras.")
+        normalizado = normalizar_nome(nome)
+        # create é atômico: duas requisições do mesmo nome não criam duplicatas.
+        identificador = uuid4().hex if novo_homonimo else hashlib.sha256(normalizado.encode("utf-8")).hexdigest()
+        return {
+            "id": identificador, "nome": nome, "nome_normalizado": normalizado,
+            "criado_em": datetime.now(timezone.utc),
+        }
+
+    def _salvar_com_aluno(self, prova_id, nome, resultado, aluno_id, novo_homonimo):
+        if type(novo_homonimo) is not bool or novo_homonimo and aluno_id is not None:
+            raise ValueError("Selecione um aluno ou confirme outra pessoa com o mesmo nome.")
+        dados = self._dados_aluno(nome, novo_homonimo=novo_homonimo)
+        correcao_id = uuid4().hex
+        for tentativa in range(2):
+            criar = False
+            if aluno_id is not None:
+                aluno = self.consultar_aluno(_id(aluno_id))
+                if aluno is None or normalizar_nome(aluno["nome"]) != dados["nome_normalizado"]:
+                    raise ValueError("Aluno selecionado não corresponde ao nome confirmado.")
+            elif novo_homonimo:
+                aluno, criar = dados, True
+            else:
+                exatos = self.correspondencias_aluno(nome)["exatos"]
+                if len(exatos) > 1:
+                    raise AlunosAmbiguos(exatos)
+                aluno, criar = (exatos[0], False) if exatos else (dados, True)
+            correcao = {"id": correcao_id, "prova_id": prova_id, "aluno": aluno["nome"],
+                        "aluno_id": aluno["id"], "resultado": deepcopy(resultado),
+                        "situacao": "provisoria" if resultado["provisorio"] else "sem_pendencias",
+                        "processada_em": datetime.now(timezone.utc)}
+            try:
+                lote = self.cliente.batch()
+                if criar:
+                    lote.create(self.cliente.collection("alunos").document(aluno["id"]), aluno)
+                lote.create(self.cliente.collection("correcoes").document(correcao_id), correcao)
+                lote.commit()
+                return correcao
+            except AlreadyExists as erro:
+                # Outro salvamento criou o ID determinístico. Reconsulta e reutiliza;
+                # o lote que falhou não deixou aluno ou correção parcialmente gravados.
+                if tentativa or not criar or novo_homonimo:
+                    raise RegistroExistente("Conflito ao salvar. Confira o histórico antes de repetir.") from erro
+            except GoogleAPICallError as erro:
+                raise ErroPersistencia("Não foi possível salvar aluno e correção.") from erro
+
+    def consultar_aluno(self, aluno_id):
+        return self._consultar("alunos", aluno_id)
+
+    def listar_alunos(self, busca=""):
+        alunos = self._listar("alunos")
+        if busca.strip():
+            termo = chave_busca(busca)
+            alunos = [a for a in alunos if termo in chave_busca(a["nome"])]
+        return sorted(alunos, key=lambda a: (chave_busca(a["nome"]), a["id"]))
+
+    def correspondencias_aluno(self, nome):
+        nome_normalizado, busca = normalizar_nome(nome), chave_busca(nome)
+        exatos, semelhantes = [], []
+        for aluno in self.listar_alunos():
+            if normalizar_nome(aluno["nome"]) == nome_normalizado:
+                exatos.append(aluno)
+            elif SequenceMatcher(None, busca, chave_busca(aluno["nome"])).ratio() >= .82:
+                semelhantes.append(aluno)
+        return {"exato": exatos[0] if len(exatos) == 1 else None, "exatos": exatos, "semelhantes": semelhantes}
+
+    def historico_aluno(self, aluno_id):
+        aluno_id = _id(aluno_id)
+        aluno = self.consultar_aluno(aluno_id)
+        if aluno is None:
+            return None
+        provas = {p["id"]: p["titulo"] for p in self.listar_provas()}
+        vinculadas, legadas = [], []
+        for original in self._listar("correcoes"):
+            por_id = original.get("aluno_id") == aluno_id
+            por_nome = (not original.get("aluno_id")
+                        and normalizar_nome(original["aluno"]) == normalizar_nome(aluno["nome"]))
+            if por_id or por_nome:
+                registro = deepcopy(original)
+                registro["avaliacao"] = provas.get(registro["prova_id"], registro["prova_id"])
+                (vinculadas if por_id else legadas).append(registro)
+        for registros in (vinculadas, legadas):
+            registros.sort(key=lambda c: str(c["processada_em"]), reverse=True)
+        return {"aluno": aluno, "correcoes": vinculadas, "legadas_por_nome": legadas}

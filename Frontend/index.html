@@ -25,27 +25,97 @@
           aria-label="Avaliações"
           title="Avaliações"
         >
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 12h6M9 16h6"/></svg><span class="nav-text">Avaliações</span>
+          <svg
+            class="nav-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            aria-hidden="true"
+          >
+            <path d="M6 3h8l4 4v14H6zM14 3v5h5M9 12h6M9 16h6" /></svg
+          ><span class="nav-text">Avaliações</span>
         </button>
-        <button class="nav-item" data-tab="correcao" aria-label="Correção" title="Correção">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M8 12l3 3 5-6"/></svg><span class="nav-text">Correção</span>
+        <button
+          class="nav-item"
+          data-tab="correcao"
+          aria-label="Correção"
+          title="Correção"
+        >
+          <svg
+            class="nav-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            aria-hidden="true"
+          >
+            <rect x="5" y="4" width="14" height="17" rx="2" />
+            <path d="M9 4V2h6v2M8 12l3 3 5-6" /></svg
+          ><span class="nav-text">Correção</span>
+        </button>
+        <button
+          class="nav-item"
+          data-tab="alunos"
+          aria-label="Alunos"
+          title="Alunos"
+        >
+          <svg
+            class="nav-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            aria-hidden="true"
+          >
+            <circle cx="9" cy="7" r="3" />
+            <path
+              d="M3 21v-4a6 6 0 0 1 12 0v4M16 4a3 3 0 0 1 0 6M17 13a5 5 0 0 1 4 4v4"
+            /></svg
+          ><span class="nav-text">Alunos</span>
         </button>
       </nav>
       <div class="sidebar-footer">
         Ambiente local<small>Captura e conferência de cartões</small>
       </div>
     </aside>
-    <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Fechar menu" tabindex="-1" hidden></button>
+    <button
+      id="sidebar-backdrop"
+      class="sidebar-backdrop"
+      aria-label="Fechar menu"
+      tabindex="-1"
+      hidden
+    ></button>
     <main>
       <div class="topbar">
         <div class="topbar-navigation">
-          <button id="sidebar-toggle" class="icon-button" type="button" aria-label="Recolher menu" title="Recolher menu" aria-controls="sidebar" aria-expanded="true">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+          <button
+            id="sidebar-toggle"
+            class="icon-button"
+            type="button"
+            aria-label="Recolher menu"
+            title="Recolher menu"
+            aria-controls="sidebar"
+            aria-expanded="true"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              aria-hidden="true"
+            >
+              <path d="m14 6-6 6 6 6" />
+            </svg>
           </button>
           <span
-          >Corretor de Gabaritos <span class="slash">/</span>
-          <span id="breadcrumb">Avaliações</span></span
-        ></div><span class="version">Versão 2</span>
+            >Corretor de Gabaritos <span class="slash">/</span>
+            <span id="breadcrumb">Avaliações</span></span
+          >
+        </div>
+        <span class="version">Versão 2</span>
       </div>
       <header class="page-header">
         <div>
@@ -89,10 +159,30 @@
             autocomplete="off"
             aria-describedby="student-name-status"
           />
-          <p id="student-name-status" class="helper" role="status">O nome será sugerido após a captura. Você também pode digitá-lo.</p>
+          <p id="student-name-status" class="helper" role="status">
+            O nome será sugerido após a captura. Você também pode digitá-lo.
+          </p>
         </div>
       </section>
-      <div class="workspace">
+      <section id="student-link-panel" class="card student-link-panel" hidden>
+        <div class="grow">
+          <label for="student-link-select"
+            >Homônimos: confirme o cadastro, se necessário</label
+          ><select id="student-link-select">
+            <option value="">Digite ou reconheça o nome para procurar</option>
+          </select>
+          <p id="student-link-status" class="helper" role="status">
+            O aluno será cadastrado ou reutilizado somente ao confirmar o
+            salvamento da correção.
+          </p>
+        </div>
+        <label id="student-homonym-label" class="check" hidden
+          ><input id="student-new-homonym" type="checkbox" />Confirmo que é
+          outra pessoa com o mesmo nome. Criar um cadastro separado somente ao
+          salvar.</label
+        >
+      </section>
+      <div id="capture-workspace" class="workspace">
         <section class="card capture-card">
           <div class="card-heading">
             <div>
@@ -143,7 +233,12 @@
               <path class="guide-corners" d="" />
             </svg>
           </div>
-          <div id="frame-status" class="frame-status vermelho" role="status" hidden>
+          <div
+            id="frame-status"
+            class="frame-status vermelho"
+            role="status"
+            hidden
+          >
             Enquadramento ainda não verificado
           </div>
           <div class="camera-toolbar">
@@ -156,8 +251,9 @@
             </button>
           </div>
           <p id="capture-note" class="helper">
-            Coloque a folha inteira dentro da moldura. Ela é uma orientação visual;
-            o contorno detectado pode estar em outra posição. Use localhost ou HTTPS.
+            Coloque a folha inteira dentro da moldura. Ela é uma orientação
+            visual; o contorno detectado pode estar em outra posição. Use
+            localhost ou HTTPS.
           </p>
           <div class="file-choice">
             <span>ou selecione um arquivo</span
@@ -239,6 +335,60 @@
           </div>
         </section>
       </div>
+      <section id="visual-panel" class="card list-card" hidden>
+        <div class="card-heading">
+          <h2>Cartão corrigido</h2>
+          <span class="tag">Conferência visual</span>
+        </div>
+        <p class="annotation-legend">
+          <span class="correct">+ Correta</span
+          ><span class="incorrect">× Incorreta</span
+          ><span class="pending">? Pendente</span
+          ><span class="blank">– Em branco</span>
+        </p>
+        <p id="visual-status" class="helper" role="status"></p>
+        <div class="visual-layout">
+          <div class="annotated-image">
+            <canvas
+              id="annotated-card"
+              role="img"
+              aria-label="Cartão com questões numeradas e cores de conferência"
+            ></canvas>
+          </div>
+          <div>
+            <h3>Conferência das respostas</h3>
+            <p class="helper">
+              Uma alteração manual recalcula a nota e as cores. Confirme
+              novamente antes de salvar.
+            </p>
+            <div id="student-answer-grid" class="answer-grid"></div>
+          </div>
+        </div>
+      </section>
+      <section id="students-panel" hidden>
+        <div class="students-layout">
+          <section class="card list-card">
+            <div class="card-heading"><h2>Alunos cadastrados</h2></div>
+            <label for="student-search">Pesquisar pelo nome</label
+            ><input
+              id="student-search"
+              type="search"
+              placeholder="Digite parte do nome"
+            />
+            <div id="students-list" class="evaluation-list"></div>
+          </section>
+          <section class="card list-card">
+            <div class="card-heading">
+              <h2 id="student-history-title">Histórico do aluno</h2>
+            </div>
+            <div id="student-history">
+              <p class="helper">
+                Selecione um aluno para consultar suas correções.
+              </p>
+            </div>
+          </section>
+        </div>
+      </section>
       <section id="evaluation-list-panel" class="card list-card">
         <div class="card-heading">
           <div>

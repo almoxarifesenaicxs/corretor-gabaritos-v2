@@ -28,7 +28,7 @@ O objetivo é oferecer uma solução simples, rápida e organizada para o cadast
 
 ## Funcionalidades do sistema
 
-A interface terá somente duas abas principais.
+A interface possui três abas principais: **Avaliações**, **Correção** e **Alunos**.
 
 ### 1. Avaliações
 
@@ -64,6 +64,23 @@ O usuário poderá:
 9. Conferir o resultado e confirmar o salvamento no Firebase.
 
 O sistema não deverá salvar automaticamente uma correção sem confirmação.
+
+A Correção recebe o nome digitado ou sugerido pelo OCR. Somente ao salvar a
+correção confirmada, o sistema cadastra ou reutiliza o aluno pelo nome normalizado.
+Homônimos exigem conferência. A imagem processada recebe contornos verdes (acertos),
+vermelhos (erros), amarelos (pendências) e cinza (brancos), com números e símbolos.
+A conferência manual recalcula a nota e as cores e exige nova confirmação.
+
+### 3. Alunos
+
+Pesquisa, listagem alfabética e histórico individual, sem formulário de cadastro.
+O aluno é criado automaticamente junto da correção confirmada. Correspondências
+exatas são reutilizadas, e nomes semelhantes não são associados. Correções novas usam
+IDs estáveis. Registros antigos apenas com nome permanecem inalterados e são
+exibidos separadamente no histórico.
+
+Detalhes, endpoints e exemplo da imagem anotada em
+[docs/alunos-correcao-visual.md](docs/alunos-correcao-visual.md).
 
 ## Captura de imagens pela webcam
 
@@ -188,6 +205,7 @@ Endereços locais:
 - API: http://127.0.0.1:8000/
 - Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/api/health
+- Interface web: http://127.0.0.1:8000/interface/
 
 O endpoint `POST /api/correcoes/processar` recebe um cartão PDF/JPG/PNG e um gabarito oficial explícito em JSON, realizando o processamento e retornando o resultado.
 
@@ -201,13 +219,19 @@ Na pasta `Backend/`, execute:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Último resultado informado, ao concluir a Issue 05:
+Validação da Issue 07:
 
-- 130 testes aprovados.
+- 208 testes Python aprovados.
 - 1 teste ignorado por ausência do Firestore Emulator.
 - 0 testes reprovados.
 
-Os testes não comprovam ainda o funcionamento completo da interface, da webcam USB ou do fluxo integrado com o Firestore Emulator.
+Também foram executados 15 testes JavaScript e 5 cenários Chrome com persistência
+simulada. Os testes não substituem a validação física da webcam USB nem o fluxo
+integrado com Firestore Emulator. Para JavaScript, execute da raiz:
+
+```powershell
+node --test Frontend/tests/*.test.mjs
+```
 
 ## Etapas de desenvolvimento
 
@@ -218,7 +242,8 @@ Os testes não comprovam ainda o funcionamento completo da interface, da webcam 
 | 03 | Motor de correção automática | Concluída |
 | 04 | Integração do reconhecimento à API | Concluída |
 | 05 | Persistência com Firebase Firestore | Implementada; integração e validação no emulador a confirmar |
-| 06 | Interface web e câmera USB | Planejada / em desenvolvimento |
+| 06 | Interface web e câmera USB | Implementada; teste físico pendente |
+| 07 | Cadastro de alunos e correção visual | Implementada; validação física e emulador pendentes |
 
 ### Próximas validações
 
@@ -237,7 +262,7 @@ A interface seguirá como referência o padrão visual do sistema SENAI apresent
 Características principais:
 
 - Tema escuro, com fundo azul-marinho.
-- Menu lateral contendo apenas **Avaliações** e **Correção**.
+- Menu lateral contendo apenas **Avaliações**, **Correção** e **Alunos**.
 - Campos e cartões com bordas arredondadas.
 - Botões e elementos de destaque em azul.
 - Tipografia clara e legível.
