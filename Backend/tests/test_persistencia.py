@@ -32,6 +32,8 @@ def banco():
 
         def documento(identificador):
             ref = MagicMock()
+            ref.id = identificador
+            ref.colecao = nome
             def criar(valor):
                 if (nome, identificador) in dados:
                     raise AlreadyExists("Já existe")
@@ -52,6 +54,18 @@ def banco():
         return referencia
 
     cliente.collection.side_effect = colecao
+    def batch():
+        escritas = []
+        lote = MagicMock()
+        lote.create.side_effect = lambda ref, valor: escritas.append((ref.colecao, ref.id, deepcopy(valor)))
+        def commit():
+            if any((c, i) in dados for c, i, _ in escritas):
+                raise AlreadyExists('Conflito atômico')
+            for c, i, valor in escritas:
+                dados[c, i] = _helpers.decode_dict(_helpers.encode_dict(valor), cliente)
+        lote.commit.side_effect = commit
+        return lote
+    cliente.batch.side_effect = batch
     return Persistencia(cliente), dados
 
 

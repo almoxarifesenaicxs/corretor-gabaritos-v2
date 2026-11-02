@@ -1,4 +1,4 @@
-"""Rotas indispensáveis aos dois fluxos da interface web."""
+"""Rotas dos fluxos da interface web, com persistência explícita."""
 
 from pathlib import Path
 from ipaddress import ip_address
@@ -13,9 +13,12 @@ from app.database.firestore import conectar_firestore, usar_emulador_configurado
 from app.routes.correcoes import ler_upload, LIMITE_UPLOAD
 from app.services.captura import analisar_folha, decodificar_captura, retificar_captura
 from app.services.persistencia import Persistencia, ErroPersistencia, RegistroExistente
+from app.services.persistencia import AlunosAmbiguos
 from app.services.reconhecimento import ErroLeitura, reconhecer_arquivo
 from app.services.reconhecimento import carregar_imagem
 from app.services.nome_aluno import ler_nome
+from app.services.correcao import corrigir_respostas
+from app.services.correcao_visual import classificar_questoes
 
 router = APIRouter(prefix="/api", tags=["Interface"])
 
@@ -81,6 +84,41 @@ class CorrecaoEntrada(BaseModel):
     resultado: dict
     confirmado: StrictBool
     permitir_provisorio: StrictBool = False
+    aluno_id: str | None = Field(default=None, min_length=1, max_length=1500)
+    novo_homonimo: StrictBool = False
+
+
+class RevisaoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    respostas: dict
+    gabarito: dict
+
+
+@router.get("/alunos")
+def listar_alunos(repo: Repo, busca: str = ""):
+    return repo.listar_alunos(busca)
+
+
+@router.get("/alunos/correspondencias")
+def correspondencias_aluno(repo: Repo, nome: str):
+    return repo.correspondencias_aluno(nome)
+
+
+@router.get("/alunos/{aluno_id}/correcoes")
+def historico_aluno(aluno_id: str, repo: Repo):
+    historico = repo.historico_aluno(aluno_id)
+    if historico is None:
+        raise HTTPException(404, "Aluno não encontrado.")
+    return historico
+
+
+@router.post("/correcoes/recalcular")
+def recalcular_correcao(entrada: RevisaoEntrada):
+    try:
+        return {"resultado": corrigir_respostas(entrada.respostas, entrada.gabarito),
+                "marcacoes": classificar_questoes(entrada.respostas, entrada.gabarito)}
+    except ValueError:
+        raise HTTPException(422, "Respostas ou gabarito inválidos para revisão.") from None
 
 
 @router.get("/avaliacoes")
@@ -107,8 +145,13 @@ def consultar_gabarito(prova_id: str, repo: Repo):
 def salvar_correcao(entrada: CorrecaoEntrada, repo: Repo):
     if not entrada.confirmado:
         raise HTTPException(422, "Confira e confirme o resultado antes de salvar.")
-    return repo.salvar_correcao(entrada.prova_id, entrada.aluno, entrada.resultado,
-                               permitir_provisorio=entrada.permitir_provisorio)
+    vinculo = {"aluno_id": entrada.aluno_id} if entrada.aluno_id is not None else {}
+    try:
+        return repo.salvar_correcao(entrada.prova_id, entrada.aluno, entrada.resultado,
+                                   permitir_provisorio=entrada.permitir_provisorio,
+                                   vincular_aluno=True, novo_homonimo=entrada.novo_homonimo, **vinculo)
+    except AlunosAmbiguos as erro:
+        raise HTTPException(409, {"codigo": "aluno_ambiguo", "mensagem": str(erro), "alunos": erro.alunos}) from None
 
 
 @router.post("/gabaritos/reconhecer")

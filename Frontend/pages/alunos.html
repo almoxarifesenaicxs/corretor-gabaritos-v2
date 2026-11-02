@@ -1,0 +1,26 @@
+<template data-slot="students-panel">
+  <section id="students-panel" hidden>
+    <div class="students-layout">
+      <section class="card list-card">
+        <div class="card-heading"><h2>Alunos cadastrados</h2></div>
+        <label for="student-search">Pesquisar pelo nome</label
+        ><input
+          id="student-search"
+          type="search"
+          placeholder="Digite parte do nome"
+        />
+        <div id="students-list" class="evaluation-list"></div>
+      </section>
+      <section class="card list-card">
+        <div class="card-heading">
+          <h2 id="student-history-title">Histórico do aluno</h2>
+        </div>
+        <div id="student-history">
+          <p class="helper">
+            Selecione um aluno para consultar suas correções.
+          </p>
+        </div>
+      </section>
+    </div>
+  </section>
+</template>
