@@ -47,7 +47,7 @@ def carregar_imagem(caminho: str | Path) -> np.ndarray:
 
 
 def binarizar(imagem: np.ndarray) -> np.ndarray:
-    """Converte para cinza e separa tinta de papel por Otsu (tinta = 255)."""
+    """Compensa iluminação local antes de separar tinta por Otsu (tinta = 255)."""
     if not isinstance(imagem, np.ndarray) or imagem.dtype != np.uint8 or imagem.size == 0:
         raise ErroLeitura("Esperada imagem não vazia com pixels uint8.")
     if imagem.ndim == 2:
@@ -56,7 +56,14 @@ def binarizar(imagem: np.ndarray) -> np.ndarray:
         cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
     else:
         raise ErroLeitura("Esperada imagem em cinza ou BGR.")
-    return cv2.threshold(cinza, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    # Estima o papel ao fechar marcas escuras com uma janela proporcional à
+    # página. Dividir pelo fundo evita interpretar regiões sombreadas como tinta.
+    # A mesma imagem binária alimenta leitura e sobreposição das alternativas.
+    janela = max(3, round(min(cinza.shape) * 0.04)) | 1
+    fundo = cv2.morphologyEx(cinza, cv2.MORPH_CLOSE,
+                            cv2.getStructuringElement(cv2.MORPH_RECT, (janela, janela)))
+    normalizada = cv2.divide(cinza, np.maximum(fundo, 1), scale=255)
+    return cv2.threshold(normalizada, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
 
 def identificar_grade(binaria: np.ndarray) -> list[list[tuple[float, float, float]]]:

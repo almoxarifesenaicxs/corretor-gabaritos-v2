@@ -108,3 +108,19 @@ def test_pdf_protegido(tmp_path):
                        owner_pw="dono", user_pw="senha")
     with pytest.raises(ErroLeitura):
         carregar_imagem(caminho)
+
+
+@pytest.mark.parametrize("eixo", [0, 1])
+@pytest.mark.parametrize("escala", [0.75, 1.0, 1.5])
+def test_iluminacao_desigual_preserva_estados(eixo, escala):
+    imagem = cv2.resize(cartao({
+        (1, 0): "cheia", (25, 4): "cheia", (26, 2): "cheia",
+        (50, 1): "cheia", (5, 0): "cheia", (5, 2): "cheia",
+        (6, 3): "parcial", (7, 0): "cheia", (7, 1): "parcial",
+    }), None, fx=escala, fy=escala)
+    esperado = reconhecer_imagem(imagem)
+    h, w = imagem.shape[:2]
+    luz = np.linspace(0.30, 1.0, h if eixo == 0 else w).reshape(
+        (h, 1, 1) if eixo == 0 else (1, w, 1))
+    sombreada = (imagem * luz).astype(np.uint8)
+    assert reconhecer_imagem(sombreada) == esperado

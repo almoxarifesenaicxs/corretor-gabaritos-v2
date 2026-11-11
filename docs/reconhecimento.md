@@ -28,7 +28,9 @@ Para iniciar a API existente: `.\.venv\Scripts\python.exe -m uvicorn app.main:ap
 `carregar_imagem(caminho)` retorna uma matriz NumPy BGR. PDFs têm somente a
 primeira página renderizada, a 150 dpi e sem transparência. Imagens são
 decodificadas pelo OpenCV, inclusive em caminhos com acentos.
-`binarizar` converte para cinza e aplica Otsu com tinta branca sobre fundo preto.
+`binarizar` converte para cinza, estima o fundo por fechamento morfológico
+(janela de 4% da menor dimensão da imagem), normaliza a iluminação por divisão
+e aplica Otsu com tinta branca sobre fundo preto.
 `identificar_tabelas` procura primeiro duas tabelas retangulares de respostas.
 Se não houver tabelas candidatas, `identificar_grade` procura o modelo circular
 por contornos. Tabelas candidatas com geometria inválida geram erro.
@@ -88,7 +90,16 @@ páginas (somente a primeira é lida), PDF protegido, imagens válidas e inváli
 quatro estados de resposta, numeração, mudança de escala e grades inválidas.
 Os testes originais da API fazem parte da mesma suíte.
 
-Não há correção de perspectiva, rotação, sombras ou iluminação desigual.
+Há compensação de iluminação desigual antes da detecção. Nos testes locais,
+os dois PDFs de referência preservam as 50 respostas (ou os 50 brancos) com
+gradientes de iluminação de 30% a 100%, verticais e horizontais, combinados
+com compressão JPEG de qualidade 80. Antes da alteração, esses gradientes
+impediam a detecção das tabelas. Os testes circulares verificam também
+preservação de marcas múltiplas e duvidosas em três escalas.
+Essas alterações simuladas não medem a precisão em fotografias reais.
+
+O leitor não corrige rotação ou perspectiva; a captura tem sua própria
+retificação de folha. Sombras abruptas e reflexos ainda exigem validação.
 Otsu pressupõe contraste suficiente. Bordas retangulares envolvendo a grade,
 outros círculos na página, rasuras que alterem o contorno e círculos ausentes
 podem causar rejeição. Marcas muito claras ou fora do miolo podem parecer branco;

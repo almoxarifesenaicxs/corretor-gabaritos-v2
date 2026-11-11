@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 
 from app.services.reconhecimento import (
@@ -15,6 +16,25 @@ LOCAL = Path(__file__).parent / "fixtures" / "local"
 # Matemática reinicia em 1 no papel e ocupa 26–50 no contrato do serviço.
 PORTUGUES = "C D A C B D D C C B A C A B B B B C B B A C B C D".split()
 MATEMATICA = "C D B C D B B B B B C D C C A B C C B B C C B B B".split()
+
+
+@pytest.mark.parametrize("eixo", [0, 1])
+@pytest.mark.parametrize("preenchido", [False, True])
+def test_pdf_com_sombra_e_compressao(preenchido, eixo):
+    nome = "Gabarito Prova AIB.pdf" if preenchido else "Gabarito em Branco.pdf"
+    imagem = carregar_imagem(arquivo_local(nome))
+    h, w = imagem.shape[:2]
+    luz = np.linspace(0.30, 1.0, h if eixo == 0 else w).reshape(
+        (h, 1, 1) if eixo == 0 else (1, w, 1))
+    sombreada = (imagem * luz).astype(np.uint8)
+    comprimida = cv2.imencode('.jpg', sombreada, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]
+    resultado = reconhecer_imagem(cv2.imdecode(comprimida, cv2.IMREAD_COLOR))
+    for numero, esperada in enumerate(PORTUGUES + MATEMATICA, 1):
+        assert resultado[str(numero)] == {
+            "resposta": esperada if preenchido else None,
+            "estado": "marcada" if preenchido else "branco",
+            "alternativas": [esperada] if preenchido else [],
+        }
 
 
 def arquivo_local(nome):
