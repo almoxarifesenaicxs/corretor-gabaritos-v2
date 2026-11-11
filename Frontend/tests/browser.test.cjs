@@ -1,12 +1,93 @@
-/* QA opcional: Playwright instalado separadamente, Chrome local e backend ativo. */
+/* QA isolado: login e API simulados, servidor estático local e dados sintéticos. */
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
-const { chromium } = require("playwright");
+const environment = require("./browser-environment.cjs");
+const { chromium, login } = environment;
+let baseURL, artifacts;
+test.before(async () => {
+  await environment.start();
+  ({ baseURL, artifacts } = environment);
+});
+test.after(() => environment.stop());
 
-const baseURL = process.env.QA_BASE_URL || "http://127.0.0.1:8766";
-const artifacts = process.env.QA_ARTIFACT_DIR;
+test("login bloqueia telas, envia Bearer e logout elimina a sessão", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const calls = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/api/')) calls.push(request);
+    });
+    await page.goto(baseURL + '/interface/#alunos');
+    await page.locator('#login-panel').waitFor();
+    assert.equal(await page.locator('[data-tab="alunos"]').isVisible(), false);
+    assert.equal(await page.locator('#camera-video').count(), 0);
+    assert.equal(calls.length, 0);
+    assert.equal(await page.evaluate(async () => (await fetch('/api/avaliacoes')).status), 401);
+    calls.length = 0;
+    await login(page);
+    await page.locator('#students-panel').waitFor();
+    assert.equal(await page.locator('#login-panel').isHidden(), true);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(request => request.headers().authorization === 'Bearer id-token-simulado-sem-validade'));
+    assert.equal(await page.locator('#login-password').inputValue(), '');
+    for (const tab of ['avaliacoes', 'correcao', 'alunos']) {
+      await page.locator(`[data-tab="${tab}"]`).click();
+      assert.equal(new URL(page.url()).hash, `#${tab}`);
+    }
+    await page.locator('#logout').click();
+    await page.locator('#login-panel').waitFor();
+    assert.equal(await page.locator('#camera-video').count(), 0);
+    assert.equal(await page.evaluate(async () => (await import('./js/auth.mjs')).authSession.getToken()), null);
+    assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+    await page.reload();
+    await page.locator('#login-panel').waitFor();
+    assert.equal(await page.locator('[data-tab="alunos"]').isVisible(), false);
+  } finally { await browser.close(); }
+});
+
+for (const status of [401, 403]) {
+  test(`login rejeitado por ${status} não carrega dados administrativos`, async () => {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      const calls = [];
+      page.on('request', request => {
+        if (new URL(request.url()).pathname.startsWith('/api/')) calls.push(new URL(request.url()).pathname);
+      });
+      await page.route('**/api/auth/me', route => route.fulfill({ status, json: { detail: 'Acesso negado simulado.' } }));
+      await page.goto(baseURL + '/interface/');
+      await login(page);
+      await page.waitForFunction(() => document.querySelector('#login-message').textContent === 'Acesso negado simulado.');
+      assert.equal(await page.locator('#login-panel').isVisible(), true);
+      assert.equal(await page.locator('#camera-video').count(), 0);
+      assert.deepEqual(calls, ['/api/auth/me']);
+      assert.equal(await page.evaluate(async () => (await import('./js/auth.mjs')).authSession.getToken()), null);
+    } finally { await browser.close(); }
+  });
+
+  test(`resposta ${status} durante sessão retorna ao login sem repetir requisição`, async () => {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(baseURL + '/interface/');
+      await login(page);
+      await page.getByText('Nenhuma avaliação cadastrada.', { exact: false }).waitFor();
+      let calls = 0;
+      await page.route('**/api/avaliacoes', route => {
+        calls++;
+        return route.fulfill({ status, json: { detail: 'Sessão rejeitada.' } });
+      });
+      await page.locator('#refresh-evaluations').click();
+      await page.locator('#login-panel').waitFor();
+      assert.equal(calls, 1);
+      assert.equal(await page.evaluate(async () => (await import('./js/auth.mjs')).authSession.getToken()), null);
+      assert.equal(await page.locator('#camera-video').count(), 0);
+    } finally { await browser.close(); }
+  });
+}
 
 async function mockStudents(page) {
   const students = [];
@@ -148,6 +229,7 @@ test("automatic student creation only on save and visual review", async () => {
       route.fulfill({ json: { alternativas: official } }),
     );
     await page.goto(baseURL + "/interface/");
+    await login(page);
     assert.equal(await page.locator("[data-tab]").count(), 3);
     assert.equal(await page.locator("#student-create-form").count(), 0);
     assert.equal(await page.locator("#student-register-current").count(), 0);
@@ -276,6 +358,7 @@ test("homônimos exigem escolha sem perder a correção", async () => {
       r.fulfill({ json: { alternativas: official } }),
     );
     await page.goto(baseURL + "/interface/");
+    await login(page);
     await page.locator('[data-tab="correcao"]').click();
     await page.locator("#evaluation-select").selectOption("avaliacao");
     await page.locator("#student-name").fill("Ana Silva");
@@ -337,7 +420,7 @@ test("OCR da mesma captura sugere nome editável e só salva após confirmação
         json: { id: "correcao-ocr", aluno: saved.aluno },
       });
     });
-    // Cartão de referência com nome IMPRESSO sintético inserido; não é manuscrito real.
+    // Imagem gerada pelo harness; o nome vem da resposta OCR simulada.
     const image = fs
       .readFileSync(path.join(artifacts, "nome-impresso.png"))
       .toString("base64");
@@ -368,6 +451,7 @@ test("OCR da mesma captura sugere nome editável e só salva após confirmação
       files[new URL(request.url()).pathname] = body.subarray(start, end);
     });
     await page.goto(baseURL + "/interface/");
+    await login(page);
     await page.getByRole("button", { name: "Correção", exact: true }).click();
     await page.locator("#evaluation-select").selectOption("ocr-teste");
     await page.bringToFront();
@@ -431,17 +515,21 @@ test("moldura fixa visível na inicialização e quando nenhuma folha é detecta
     );
     // Mantém a permissão pendente para verificar a moldura antes do primeiro frame.
     await page.addInitScript(() => {
-      const original = navigator.mediaDevices.getUserMedia.bind(
-        navigator.mediaDevices,
-      );
-      navigator.mediaDevices.getUserMedia = async (constraints) => {
+      navigator.mediaDevices.getUserMedia = async () => {
         await new Promise((resolve) => {
           window.releaseCamera = resolve;
         });
-        return original(constraints);
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const context = canvas.getContext('2d');
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, 640, 480);
+        return canvas.captureStream(2);
       };
     });
     await page.goto(baseURL + "/interface/");
+    await login(page);
     await page.bringToFront();
     await page.locator("#camera-start").click();
     await page.waitForFunction(
@@ -522,6 +610,7 @@ test("moldura fixa visível na inicialização e quando nenhuma folha é detecta
           getComputedStyle(document.querySelector(".guide")).stroke ===
           expected,
         cor,
+        { polling: 100 },
       );
       assert.equal(await page.locator(".guide").isVisible(), true);
       assert.equal(await page.locator(".guide").getAttribute("x"), fixed);
@@ -533,10 +622,10 @@ test("moldura fixa visível na inicialização e quando nenhuma folha é detecta
   }
 });
 
-test("fluxos de avaliações e correções com câmera simulada e backend real", async () => {
+test("fluxos de avaliações e correções com câmera e API simuladas", async () => {
   assert.ok(
     artifacts,
-    "Defina QA_ARTIFACT_DIR com cartao.png e multipla.png sintéticos.",
+    "O harness deve criar os arquivos sintéticos temporários.",
   );
   const browser = await chromium.launch({
     executablePath: process.env.QA_CHROME_PATH,
@@ -557,7 +646,7 @@ test("fluxos de avaliações e correções com câmera simulada e backend real",
     const evaluations = [],
       saved = [];
     let candidateRequests = 0;
-    // Somente persistência simulada. Reconhecimento, análise e correção usam HTTP real.
+    // Persistência, reconhecimento, análise e correção usam respostas simuladas.
     await page.route("**/api/avaliacoes", async (route) => {
       if (route.request().method() === "GET")
         return route.fulfill({ json: evaluations });
@@ -585,6 +674,7 @@ test("fluxos de avaliações e correções com câmera simulada e backend real",
       });
     });
     await page.goto(baseURL + "/interface/");
+    await login(page);
     await page
       .getByText("Nenhuma avaliação cadastrada.", { exact: false })
       .waitFor();
@@ -730,6 +820,7 @@ test("fluxos de avaliações e correções com câmera simulada e backend real",
       };
     });
     await denied.goto(baseURL + "/interface/");
+    await login(denied);
     await denied.locator("#camera-start").click();
     await denied
       .getByText("Permissão da câmera negada.", { exact: false })
@@ -756,6 +847,7 @@ test("page fragments load before initialization and failures keep navigation dis
       await route.continue();
     });
     await page.goto(baseURL + "/interface/", { waitUntil: "commit" });
+    await login(page);
     await loading;
     await page.locator('[data-tab="alunos"]').waitFor();
     assert.equal(await page.locator('[data-tab="alunos"]').isDisabled(), true);
@@ -775,10 +867,11 @@ test("page fragments load before initialization and failures keep navigation dis
     failed.on('request', request => { if (request.url().includes('/api/')) apiCalls.push(request.url()); });
     await failed.route('**/pages/alunos.html', route => route.fulfill({ status: 404, body: '' }));
     await failed.goto(baseURL + '/interface/');
+    await login(failed);
     await failed.locator('#message.error').waitFor();
     assert.equal(await failed.locator('[data-tab="avaliacoes"]').isDisabled(), true);
     assert.equal(await failed.locator('#camera-video').count(), 0);
-    assert.deepEqual(apiCalls, []);
+    assert.deepEqual(apiCalls.map(url => new URL(url).pathname), ["/api/auth/me"]);
     await failed.close();
   } finally { await browser.close(); }
 });
@@ -800,6 +893,7 @@ test("save retries reuse operation after response loss", async () => {
       return route.fulfill({status: 201, json: saved});
     });
     await page.goto(baseURL + '/interface/');
+    await login(page);
     await page.locator('[data-tab="correcao"]').click();
     await page.locator('#evaluation-select').selectOption('retry');
     await page.locator('#student-name').fill('Aluno Retry');

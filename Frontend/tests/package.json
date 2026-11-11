@@ -1,0 +1,6 @@
+{
+  "name": "corretor-browser-tests",
+  "private": true,
+  "scripts": { "test": "node --test *.test.mjs", "test:browser": "node --test browser.test.cjs" },
+  "devDependencies": { "playwright": "1.65.0" }
+}
