@@ -8,7 +8,19 @@
     <link rel="stylesheet" href="css/style.css" />
     <script type="module" src="js/app.mjs"></script>
   </head>
-  <body inert>
+  <body inert class="login-required">
+    <section id="login-panel" aria-labelledby="login-title">
+      <form id="login-form" class="login-card">
+        <h1 id="login-title">Corretor de Gabaritos</h1>
+        <p>Entre com sua conta autorizada.</p>
+        <label for="login-email">E-mail</label>
+        <input id="login-email" name="email" type="email" autocomplete="username" required />
+        <label for="login-password">Senha</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+        <button type="submit">Entrar</button>
+        <p id="login-message" role="status" aria-live="polite"></p>
+      </form>
+    </section>
     <aside id="sidebar" class="sidebar" aria-label="Menu lateral">
       <a class="brand" href="./" aria-label="Corretor de Gabaritos V2"
         ><span class="brand-mark">SENAI</span>
@@ -114,6 +126,7 @@
             <span id="breadcrumb">Avaliações</span></span
           >
         </div>
+        <button id="logout" type="button" hidden>Sair</button>
         <span class="version">Versão 2</span>
       </div>
       <header class="page-header">

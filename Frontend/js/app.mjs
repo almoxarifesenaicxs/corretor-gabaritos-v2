@@ -1,10 +1,12 @@
 import { loadPages } from "./paginas.mjs";
+import { requireLogin } from "./login.mjs";
 
 const navigation = [...document.querySelectorAll("[data-tab]")];
 navigation.forEach((button) => {
   button.disabled = true;
 });
 try {
+  await requireLogin();
   await loadPages();
   await import("./layout.mjs");
   await import("./fluxo-captura.mjs");

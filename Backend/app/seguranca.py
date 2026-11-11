@@ -7,6 +7,11 @@ import asyncio
 import time
 
 from starlette.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from app.autenticacao import autorizar_credencial
+from app.ambiente import Ambiente
 
 LIMITE_CORPO_UPLOAD = 11 * 1024 * 1024
 LIMITE_CORPO_JSON = 128 * 1024
@@ -20,13 +25,16 @@ ROTAS_PROCESSAMENTO = {
 
 
 class ProtecaoLocal:
-    def __init__(self, app):
+    def __init__(self, app, ambiente=None):
         self.app = app
+        self.ambiente = ambiente or Ambiente("local")
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         headers = dict(scope["headers"])
+        if self.ambiente.modo == "producao":
+            return await self.producao(scope, receive, send, headers)
         try:
             host = headers.get(b"host", b"").decode("ascii")
             destino = urlsplit("//" + host)
@@ -40,6 +48,63 @@ class ProtecaoLocal:
             permitido = False
         if not permitido:
             return await JSONResponse({"detail": "Aplicação disponível somente por acesso local direto."}, 403)(scope, receive, send)
+        return await self.receber_corpo(scope, receive, send, headers)
+
+    async def producao(self, scope, receive, send, headers):
+        # Host/Origin/Authorization ambíguos são rejeitados, nunca escolher um dos valores.
+        for nome in (b"host", b"origin", b"authorization", b"content-length"):
+            if sum(chave == nome for chave, _ in scope["headers"]) > 1:
+                return await JSONResponse({"detail": "Cabeçalhos ambíguos."}, 400)(scope, receive, send)
+        try:
+            host = headers.get(b"host", b"").decode("ascii").lower()
+            origem = headers.get(b"origin")
+            permitido = host in self.ambiente.hosts and (
+                origem is None or origem.decode("ascii") in self.ambiente.origens)
+        except UnicodeError:
+            permitido = False
+        if not permitido:
+            return await JSONResponse({"detail": "Host ou origem não autorizado."}, 403)(scope, receive, send)
+
+        # Erros de autenticação/limites também precisam ser legíveis pela origem
+        # autorizada. Não acrescentar CORS a origens ou hosts rejeitados acima.
+        enviar_original = send
+
+        async def enviar(evento):
+            if evento["type"] == "http.response.start" and origem is not None:
+                cabecalhos = list(evento.get("headers", []))
+                if not any(k == b"access-control-allow-origin" for k, _ in cabecalhos):
+                    cabecalhos.extend([(b"access-control-allow-origin", origem), (b"vary", b"Origin")])
+                    evento = {**evento, "headers": cabecalhos}
+            await enviar_original(evento)
+
+        send = enviar
+
+        # Render termina TLS antes do serviço. Não interpretar IP, esquema ou Host
+        # encaminhados; autenticação e autorização nunca dependem desses valores.
+        scope = dict(scope)
+        scope["headers"] = [(k, v) for k, v in scope["headers"]
+                            if k != b"forwarded" and not k.startswith(b"x-forwarded-")]
+        headers = dict(scope["headers"])
+        preflight = (scope["method"] == "OPTIONS" and origem is not None
+                     and b"access-control-request-method" in headers)
+        publico = scope["method"] in {"GET", "HEAD"} and scope["path"] in {"/", "/api/health"}
+        if not publico and not preflight:
+            try:
+                valor = headers.get(b"authorization", b"").decode("ascii")
+                partes = valor.split()
+                credencial = (HTTPAuthorizationCredentials(scheme="Bearer", credentials=partes[1])
+                              if len(partes) == 2 and partes[0].lower() == "bearer" else None)
+                usuario = await run_in_threadpool(autorizar_credencial, credencial)
+            except UnicodeError:
+                return await JSONResponse({"detail": "Autenticação inválida."}, 401,
+                    headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
+            except HTTPException as erro:
+                return await JSONResponse({"detail": erro.detail}, erro.status_code,
+                    headers=erro.headers)(scope, receive, send)
+            scope["state"] = {**scope.get("state", {}), "administrador_verificado": usuario}
+        return await self.receber_corpo(scope, receive, send, headers)
+
+    async def receber_corpo(self, scope, receive, send, headers):
         if scope["method"] not in {"POST", "PUT", "PATCH"}:
             return await self.app(scope, receive, send)
         if not _RECEPCOES.acquire(blocking=False):

@@ -49,7 +49,12 @@ def obter_persistencia(request: Request):
         emulador = usar_emulador_configurado()
     except ValueError:
         raise HTTPException(503, "Persistência indisponível. Confira FIRESTORE_MODO e a configuração do Firestore no backend.") from None
-    if not emulador:
+    if getattr(request.app.state, "ambiente", "local") == "producao":
+        if emulador:
+            raise HTTPException(503, "Emulador indisponível em produção.")
+        if not getattr(request.state, "administrador_verificado", None):
+            raise HTTPException(403, "Autorização administrativa necessária.")
+    elif not emulador:
         exigir_acesso_local(request)
     iniciado = False
     try:
