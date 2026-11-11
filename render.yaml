@@ -1,0 +1,31 @@
+# Preparação somente. Importar um Blueprint na Render pode iniciar um deploy.
+# Homologação de infraestrutura: somente GET /api/health, sem Firebase.
+services:
+  - type: web
+    name: corretor-gabaritos-v2-api
+    runtime: python
+    branch: feature/deploy-vercel-render
+    rootDir: Backend
+    plan: 1c-2g
+    autoDeployTrigger: "off"
+    buildCommand: >-
+      python -m pip install --only-binary=:all: -r requirements.txt &&
+      python -m pip check &&
+      python scripts/verificar_runtime.py
+    startCommand: >-
+      python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --no-proxy-headers --workers 1
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14.6"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: APP_AMBIENTE
+        value: homologacao
+      - key: SERVIR_FRONTEND
+        value: "false"
+      - key: ALLOWED_HOSTS
+        sync: false

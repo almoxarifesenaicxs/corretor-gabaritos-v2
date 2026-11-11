@@ -2,5 +2,14 @@
 __pycache__/
 .pytest_cache/
 .env
+.env.*
+!.env.example
+.secrets/
+*firebase-adminsdk*.json
+firebase-debug.log*
+firestore-debug.log*
+.firebase/
 *.pyc
 *service-account*.json
+
+Backend/tests/fixtures/local/

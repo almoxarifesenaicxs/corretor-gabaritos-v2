@@ -1,0 +1,116 @@
+<template data-slot="correction-fields">
+  <section id="correction-fields" class="card setup-card" hidden>
+    <span class="step">01</span>
+    <div class="grow">
+      <label for="evaluation-select">Avaliação cadastrada</label
+      ><select id="evaluation-select">
+        <option value="">Selecione uma avaliação</option>
+      </select>
+    </div>
+    <div class="grow">
+      <label for="student-name">Nome do aluno</label
+      ><input
+        id="student-name"
+        maxlength="200"
+        placeholder="Capture o cartão ou digite o nome"
+        autocomplete="off"
+        aria-describedby="student-name-status"
+      />
+      <p id="student-name-status" class="helper" role="status">
+        O nome será sugerido após a captura. Você também pode digitá-lo.
+      </p>
+    </div>
+  </section>
+</template>
+
+<template data-slot="student-link-panel">
+  <section id="student-link-panel" class="card student-link-panel" hidden>
+    <div class="grow">
+      <label for="student-link-select"
+        >Homônimos: confirme o cadastro, se necessário</label
+      ><select id="student-link-select">
+        <option value="">Digite ou reconheça o nome para procurar</option>
+      </select>
+      <p id="student-link-status" class="helper" role="status">
+        O aluno será cadastrado ou reutilizado somente ao confirmar o salvamento
+        da correção.
+      </p>
+    </div>
+    <label id="student-homonym-label" class="check" hidden
+      ><input id="student-new-homonym" type="checkbox" />Confirmo que é outra
+      pessoa com o mesmo nome. Criar um cadastro separado somente ao
+      salvar.</label
+    >
+  </section>
+</template>
+
+<template data-slot="result-panel">
+  <section id="result-panel" class="card review-card" hidden>
+    <div class="card-heading">
+      <div>
+        <p class="eyebrow">03 · CONFERÊNCIA</p>
+        <h2>Resultado da correção</h2>
+      </div>
+      <span id="result-state" class="tag">Aguardando leitura</span>
+    </div>
+    <div id="result-empty" class="empty-state">
+      <h3>Pronto para conferir</h3>
+      <p>
+        Selecione uma avaliação, informe o aluno<br />e envie o cartão para
+        visualizar o resultado.
+      </p>
+    </div>
+    <div id="result-content" hidden>
+      <div class="score">
+        <span id="total-score">—</span>
+        <div>pontos de 50<strong id="total-percent"></strong></div>
+      </div>
+      <div id="result-counts" class="counts"></div>
+      <div id="discipline-results"></div>
+      <p id="pending-list" class="helper"></p>
+      <label class="check"
+        ><input id="confirm-result" type="checkbox" />Conferi o aluno, a
+        avaliação e o resultado desta correção.</label
+      ><label id="provisional-label" class="check" hidden
+        ><input id="allow-provisional" type="checkbox" />Quero salvar este
+        resultado provisório, com pendências.</label
+      ><button id="save-result" class="primary wide" disabled>
+        Salvar correção
+      </button>
+      <p id="saved-result" class="helper" hidden></p>
+    </div>
+  </section>
+</template>
+
+<template data-slot="visual-panel">
+  <section id="visual-panel" class="card list-card" hidden>
+    <div class="card-heading">
+      <h2>Cartão corrigido</h2>
+      <span class="tag">Conferência visual</span>
+    </div>
+    <p class="annotation-legend">
+      <span class="correct">+ Correta</span
+      ><span class="incorrect">× Incorreta</span
+      ><span class="pending">? Pendente</span
+      ><span class="blank">– Em branco</span>
+    </p>
+    <p id="visual-status" class="helper" role="status"></p>
+    <div class="visual-layout">
+      <div class="annotated-image">
+        <canvas
+          id="annotated-card"
+          role="img"
+          aria-label="Cartão com questões numeradas e cores de conferência"
+        ></canvas>
+      </div>
+      <div>
+        <h3>Conferência das respostas</h3>
+        <p class="helper">
+          Uma alteração manual recalcula a nota e as cores. Confirme novamente
+          antes de salvar.
+        </p>
+        <div id="student-answer-grid" class="answer-grid"></div>
+      </div>
+    </div>
+  </section>
+</template>
