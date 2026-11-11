@@ -33,6 +33,8 @@ class ProtecaoLocal:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         headers = dict(scope["headers"])
+        if self.ambiente.modo == "homologacao":
+            return await self.homologacao(scope, receive, send, headers)
         if self.ambiente.modo == "producao":
             return await self.producao(scope, receive, send, headers)
         try:
@@ -49,6 +51,24 @@ class ProtecaoLocal:
         if not permitido:
             return await JSONResponse({"detail": "Aplicação disponível somente por acesso local direto."}, 403)(scope, receive, send)
         return await self.receber_corpo(scope, receive, send, headers)
+
+    async def homologacao(self, scope, receive, send, headers):
+        if sum(k == b"host" for k, _ in scope["headers"]) != 1:
+            return await JSONResponse({"detail": "Host inválido."}, 400)(scope, receive, send)
+        try:
+            host = headers.get(b"host", b"").decode("ascii").lower()
+            permitido = host in self.ambiente.hosts
+        except UnicodeError:
+            permitido = False
+        if not permitido:
+            return await JSONResponse({"detail": "Host não autorizado."}, 403)(scope, receive, send)
+        if scope["method"] != "GET" or scope["path"] != "/api/health":
+            return await JSONResponse({"detail": "Operação indisponível em homologação."}, 403)(scope, receive, send)
+        # Nenhum cabeçalho encaminhado participa da decisão ou chega à rota.
+        scope = dict(scope)
+        scope["headers"] = [(k, v) for k, v in scope["headers"]
+                            if k != b"forwarded" and not k.startswith(b"x-forwarded-")]
+        return await self.app(scope, receive, send)
 
     async def producao(self, scope, receive, send, headers):
         # Host/Origin/Authorization ambíguos são rejeitados, nunca escolher um dos valores.

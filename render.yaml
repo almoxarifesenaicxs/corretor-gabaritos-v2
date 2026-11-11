@@ -1,5 +1,5 @@
 # Preparação somente. Importar um Blueprint na Render pode iniciar um deploy.
-# O modo local foi preservado deliberadamente; não importar antes da homologação.
+# Homologação de infraestrutura: somente GET /api/health, sem Firebase.
 services:
   - type: web
     name: corretor-gabaritos-v2-api
@@ -24,20 +24,8 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: APP_AMBIENTE
-        value: local
+        value: homologacao
       - key: SERVIR_FRONTEND
         value: "false"
-      - key: FIRESTORE_MODO
-        sync: false
-      - key: FIREBASE_PROJECT_ID
-        sync: false
-      - key: ADMIN_UIDS
-        sync: false
-      - key: CORS_ORIGINS
-        sync: false
       - key: ALLOWED_HOSTS
-        sync: false
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        sync: false
-      - key: INTEGRIDADE_CHAVE
         sync: false

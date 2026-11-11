@@ -14,20 +14,21 @@ from test_correcao import gabarito, respostas
 RAIZ = Path(__file__).resolve().parents[2]
 
 
-def test_blueprint_preserva_modo_local_e_comandos_seguros():
+def test_blueprint_homologacao_sem_credenciais_e_comandos_seguros():
     service = yaml.safe_load((RAIZ / "render.yaml").read_text())["services"][0]
     variaveis = {item["key"]: item for item in service["envVars"]}
     assert service["rootDir"] == "Backend"
     assert service["autoDeployTrigger"] == "off"
-    assert variaveis["APP_AMBIENTE"]["value"] == "local"
+    assert variaveis["APP_AMBIENTE"]["value"] == "homologacao"
     assert variaveis["SERVIR_FRONTEND"]["value"] == "false"
     assert variaveis["PYTHON_VERSION"]["value"] == (RAIZ / "Backend/.python-version").read_text().strip()
     assert service["startCommand"] == 'python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --no-proxy-headers --workers 1'
     assert "--only-binary=:all:" in service["buildCommand"]
     assert "python scripts/verificar_runtime.py" in service["buildCommand"]
     assert service["healthCheckPath"] == "/api/health"
-    for nome in ("INTEGRIDADE_CHAVE", "GOOGLE_APPLICATION_CREDENTIALS", "ADMIN_UIDS", "FIREBASE_PROJECT_ID"):
-        assert variaveis[nome] == {"key": nome, "sync": False}
+    assert variaveis["ALLOWED_HOSTS"] == {"key": "ALLOWED_HOSTS", "sync": False}
+    assert set(variaveis) == {"PYTHON_VERSION", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
+                             "APP_AMBIENTE", "SERVIR_FRONTEND", "ALLOWED_HOSTS"}
 
 
 def test_health_sem_frontend_autenticacao_ou_firestore(monkeypatch, tmp_path):

@@ -16,10 +16,22 @@ class Ambiente:
 
 def carregar_ambiente(origens):
     modo = os.environ.get("APP_AMBIENTE", "local").strip().lower()
-    if modo not in {"local", "producao"}:
-        raise ValueError("APP_AMBIENTE deve ser local ou producao.")
+    if modo not in {"local", "homologacao", "producao"}:
+        raise ValueError("APP_AMBIENTE deve ser local, homologacao ou producao.")
     if modo == "local":
         return Ambiente(modo)
+    if modo == "homologacao":
+        hosts = tuple(host.strip().lower() for host in os.environ.get("ALLOWED_HOSTS", "").split(","))
+        if any(len(host) > 253 or any(not re.fullmatch(
+                r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                for label in host.split(".")) for host in hosts):
+            raise ValueError("Homologação exige ALLOWED_HOSTS com hosts exatos, sem portas ou curingas.")
+        if os.environ.get("SERVIR_FRONTEND", "false").strip().lower() != "false":
+            raise ValueError("Homologação exige SERVIR_FRONTEND=false.")
+        if os.environ.get("FORWARDED_ALLOW_IPS", "").strip() == "*":
+            raise ValueError("Confiança irrestrita em proxies não é permitida.")
+        # Não carregar credenciais ou serviços Firebase neste modo.
+        return Ambiente(modo, hosts)
 
     projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
     if not projeto or projeto != projeto.strip() or projeto.startswith("demo-"):

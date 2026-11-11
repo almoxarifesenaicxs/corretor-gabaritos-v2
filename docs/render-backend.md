@@ -1,7 +1,7 @@
-# Preparação do backend para Render — Etapa 10
+# Preparação do backend para Render — homologação de infraestrutura (Etapa 19)
 
 Preparação somente: nenhum serviço criado, deploy executado ou produção ativada.
-O `render.yaml` mantém `APP_AMBIENTE=local` e deploy automático desativado.
+O `render.yaml` usa `APP_AMBIENTE=homologacao` e deploy automático desativado.
 Importar um Blueprint pode iniciar sua primeira implantação mesmo com
 `autoDeployTrigger: off`: **não importar este arquivo nesta etapa**.
 
@@ -78,31 +78,53 @@ não exige a pasta Frontend. O runtime usa `SERVIR_FRONTEND=false`.
 | `PYTHON_VERSION` | `3.14.6` |
 | `PYTHONDONTWRITEBYTECODE` / `PYTHONUNBUFFERED` | `1` / `1` |
 | `PORT` | Fornecida pela Render |
-| `APP_AMBIENTE` | `local` nesta preparação; `producao` somente após autorização futura |
+| `APP_AMBIENTE` | `homologacao` no Blueprint; `local` continua sendo o padrão do código sem variável |
 | `SERVIR_FRONTEND` | `false` |
-| `FIRESTORE_MODO` | Preenchimento manual; produção exige `real` |
-| `FIREBASE_PROJECT_ID` | Projeto real autorizado, sem `demo-` em produção |
-| `ADMIN_UIDS` | UIDs explicitamente autorizados |
-| `CORS_ORIGINS` | Origens HTTPS exatas |
-| `ALLOWED_HOSTS` | Hosts públicos exatos da API |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Caminho do secret file, por exemplo `/etc/secrets/firebase-admin.json` |
-| `INTEGRIDADE_CHAVE` | Segredo estável de 32 bytes em 64 caracteres hexadecimais |
+| `ALLOWED_HOSTS` | Único campo manual do Blueprint: hosts públicos exatos da API, separados por vírgula, sem esquema, porta, caminho ou curinga |
 
-Os campos a preencher estão com `sync: false`, sem valores privados. O arquivo de
-credenciais deverá ser provisionado como Secret File, fora do Git. Não definir
-variáveis de emulador em produção nem `FORWARDED_ALLOW_IPS=*`. Não habilitar proxy
-headers no Uvicorn. O TLS externo dependerá da borda Render, conforme Etapa 09.
+`ALLOWED_HOSTS` está com `sync: false`; confirmar o subdomínio efetivamente
+atribuído pela Render antes da inicialização. Exemplo fictício:
+`api-homologacao.onrender.com`. Não inferir esse valor somente pelo nome do serviço.
+Se houver domínio personalizado verificado, incluir também o domínio que a Render
+usa no Host do health check. Lista ausente ou inválida impede a inicialização.
 
-O modo local deste Blueprint rejeita tráfego remoto, inclusive health checks com
-Host externo. Portanto, o Blueprint é deliberadamente uma preparação, não uma
-configuração pronta para importar. A ativação futura exige revisar o arquivo e
-seus valores, incluindo o modo de ambiente; não se deve contornar a proteção
-para fazer o health check passar.
+Não fornecer credenciais Firebase nesta homologação. O Blueprint não solicita
+`FIRESTORE_MODO`, `FIREBASE_PROJECT_ID`, `ADMIN_UIDS`, `CORS_ORIGINS`,
+`GOOGLE_APPLICATION_CREDENTIALS` ou `INTEGRIDADE_CHAVE`. Essas configurações continuam
+obrigatórias para produção conforme [Firebase produção](firebase-producao.md),
+mas não devem ser acrescentadas para fazer a homologação responder.
+Não habilitar proxy headers nem `FORWARDED_ALLOW_IPS=*`.
+
+## Três modos de execução
+
+- **local:** padrão quando `APP_AMBIENTE` não é definido. Mantém as restrições de
+  acesso direto por loopback, Host local, origem e cabeçalhos encaminhados.
+  Autenticação e autorização continuam obrigatórias nas rotas administrativas.
+- **homologacao:** permite remotamente apenas `GET /api/health` com Host autorizado.
+  Não registra routers administrativos, raiz, interface, `/docs`, `/redoc` ou
+  `/openapi.json`. O middleware retorna 403 para qualquer outro caminho ou método,
+  inclusive HEAD/OPTIONS e requisições com token válido. Host não autorizado recebe
+  403; Host ausente ou duplicado, 400. Não há leitura do corpo de uploads recusados.
+  `SERVIR_FRONTEND` deve permanecer `false` (também seu padrão neste modo).
+- **producao:** mantém validação completa de configuração, autenticação e
+  autorização existentes. Sua ativação não faz parte desta etapa.
+
+Em homologação, cabeçalhos `Forwarded` e `X-Forwarded-*` não concedem acesso e são
+removidos antes da rota de saúde. Um Host permitido não é identidade administrativa:
+o health check é público e não revela dados, credenciais ou configuração interna.
+O esquema HTTP interno da Render não impede o GET: TLS termina na borda e o
+Uvicorn continua com `--no-proxy-headers`. CORS não é necessário ao health check.
+
+Para uma implantação futura autorizada, manter os comandos acima, definir somente
+o Host real, confirmar 200 com `{"status":"ok"}` e verificar 403 nas demais rotas.
+Não alterar o modo para produção apenas para liberar funcionalidades: isso requer
+uma etapa separada de configuração e autorização.
 
 ## Saúde e prontidão
 
 `GET /api/health` informa somente que a API responde: não exige token nem abre
-conexão com Firestore. As barreiras de Host/Origin e modo local continuam valendo.
+conexão com Firestore. Em homologação, valida Host sem inicializar Firebase Auth,
+ADC ou Firestore. As barreiras dos modos local e produção continuam valendo.
 Os testes verificam saúde sem Frontend e sem chamada ao validador de tokens/banco.
 A inicialização de produção carrega credenciais, mas não consulta documentos.
 
@@ -147,7 +169,10 @@ medição, sem elevar os limites de segurança automaticamente.
 - Dry-run Linux: resolução concluída, nenhuma instalação.
 - Smoke test local de runtime: PNG, PDF e OCR concluídos.
 - Testes de configuração e limpeza de temporários incluídos na suíte Python.
-- Playwright continua ausente; cenários de navegador não executam.
+- Playwright foi instalado somente em `Frontend/tests` na Etapa 16; os 12 cenários
+  de navegador usam autenticação/API simuladas, sem Firebase real.
+- Testes de homologação cobrem Host, proxy manipulado, métodos, documentação,
+  rotas administrativas e rejeição mesmo com autorizador simulado válido.
 - Falta executar build/smoke tests em Linux real e homologar Firebase/Render.
 - O formato YAML é verificado localmente; não houve validação autenticada na API Render.
 

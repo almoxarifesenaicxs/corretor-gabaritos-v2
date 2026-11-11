@@ -60,27 +60,29 @@ def criar_app(*, pasta_frontend=None):
     origens = origens_cors()
     ambiente = carregar_ambiente(origens)
     producao = ambiente.modo == "producao"
+    homologacao = ambiente.modo == "homologacao"
     if producao:
         from app.services import integridade
         integridade._CHAVE = ambiente.chave_integridade
     api = FastAPI(title="Corretor Automático de Gabaritos",
                   description="API REST para correção automática de provas.", version="1.0.0",
-                  docs_url=None if producao else "/docs",
-                  redoc_url=None if producao else "/redoc",
-                  openapi_url=None if producao else "/openapi.json")
+                  docs_url=None if producao or homologacao else "/docs",
+                  redoc_url=None if producao or homologacao else "/redoc",
+                  openapi_url=None if producao or homologacao else "/openapi.json")
     api.state.ambiente = ambiente.modo
     protegidas = [Depends(exigir_administrador)]
-    api.include_router(correcoes_router, dependencies=protegidas)
-    api.include_router(interface_router, dependencies=protegidas)
-    api.add_api_route("/api/auth/me", exigir_administrador, methods=["GET"])
-    api.add_api_route("/", inicio, methods=["GET"])
+    if not homologacao:
+        api.include_router(correcoes_router, dependencies=protegidas)
+        api.include_router(interface_router, dependencies=protegidas)
+        api.add_api_route("/api/auth/me", exigir_administrador, methods=["GET"])
+        api.add_api_route("/", inicio, methods=["GET"])
     api.add_api_route("/api/health", verificar_status, methods=["GET"])
     api.add_middleware(CORSMiddleware, allow_origins=origens,
                        allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"],
                        allow_credentials=False)
     # Último middleware adicionado executa primeiro: CORS nunca contorna a proteção.
     api.add_middleware(ProtecaoLocal, ambiente=ambiente)
-    modo = os.environ.get("SERVIR_FRONTEND", "false" if producao else "auto").strip().lower()
+    modo = os.environ.get("SERVIR_FRONTEND", "false" if producao or homologacao else "auto").strip().lower()
     if modo not in {"auto", "true", "false"}:
         raise ValueError("SERVIR_FRONTEND deve ser auto, true ou false.")
     pasta = Path(pasta_frontend) if pasta_frontend is not None else Path(__file__).resolve().parents[2] / "Frontend"
