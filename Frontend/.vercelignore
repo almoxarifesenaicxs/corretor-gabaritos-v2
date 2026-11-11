@@ -1,0 +1,11 @@
+tests/
+js/script.js
+.env
+.env.*
+.secrets/
+*.pem
+*.key
+*service-account*.json
+*firebase-adminsdk*.json
+node_modules/
+.qa/

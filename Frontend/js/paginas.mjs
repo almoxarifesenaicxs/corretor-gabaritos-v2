@@ -5,6 +5,11 @@ const fragments = [
   "../components/captura.html",
 ];
 
+export function tabFromHash(hash) {
+  const tab = hash.replace(/^#/, "");
+  return ["avaliacoes", "correcao", "alunos"].includes(tab) ? tab : "avaliacoes";
+}
+
 export async function loadPages({ root = document, fetcher = fetch } = {}) {
   const contents = await Promise.all(
     fragments.map(async (path) => {

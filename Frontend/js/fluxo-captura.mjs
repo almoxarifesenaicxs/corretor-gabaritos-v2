@@ -1,4 +1,5 @@
 import { renderOfficial, renderResult } from "./revisao.mjs";
+import { tabFromHash } from "./paginas.mjs";
 
 import {
   request,
@@ -376,13 +377,17 @@ $("file-input").addEventListener("change", (event) => {
 });
 
 function switchTab(next) {
-  if (busy) return;
+  if (busy) {
+    history.replaceState(null, "", `#${tab}`);
+    return;
+  }
   stopCamera();
   clearSource();
   processGeneration += 1;
   invalidateResult();
   invalidateOfficial();
   tab = next;
+  history.replaceState(null, "", `#${tab}`);
   const isEvaluation = tab === "avaliacoes";
   const isCorrection = tab === "correcao";
   $("evaluation-fields").hidden = !isEvaluation;
@@ -608,5 +613,7 @@ window.addEventListener("pagehide", () => {
   stopCamera();
   if (previewUrl) URL.revokeObjectURL(previewUrl);
 });
+window.addEventListener("hashchange", () => switchTab(tabFromHash(location.hash)));
+switchTab(tabFromHash(location.hash));
 loadEvaluations();
 updateButtons();
