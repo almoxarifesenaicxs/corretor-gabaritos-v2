@@ -5,6 +5,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pymupdf
+import math
+
+from app.services.limites_imagem import validar_cabecalho, validar_dimensoes
 
 
 class ErroLeitura(ValueError):
@@ -25,10 +28,15 @@ def carregar_imagem(caminho: str | Path) -> np.ndarray:
             with pymupdf.open(stream=caminho.read_bytes(), filetype="pdf") as documento:
                 if documento.needs_pass or len(documento) == 0:
                     raise ErroLeitura("PDF protegido ou sem páginas.")
-                pix = documento[0].get_pixmap(dpi=150, colorspace=pymupdf.csRGB, alpha=False)
+                pagina = documento[0]
+                validar_dimensoes(math.ceil(pagina.rect.width * 150 / 72),
+                                  math.ceil(pagina.rect.height * 150 / 72))
+                pix = pagina.get_pixmap(dpi=150, colorspace=pymupdf.csRGB, alpha=False)
                 rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
                 return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        imagem = cv2.imdecode(np.frombuffer(caminho.read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
+        conteudo = caminho.read_bytes()
+        validar_cabecalho(conteudo)
+        imagem = cv2.imdecode(np.frombuffer(conteudo, dtype=np.uint8), cv2.IMREAD_COLOR)
         if imagem is None:
             raise ErroLeitura("Imagem corrompida ou ilegível.")
         return imagem

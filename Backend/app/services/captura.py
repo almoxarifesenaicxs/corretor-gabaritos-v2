@@ -4,9 +4,14 @@ import cv2
 import numpy as np
 
 from app.services.reconhecimento import ErroLeitura
+from app.services.limites_imagem import validar_cabecalho
 
 
 def decodificar_captura(conteudo):
+    try:
+        validar_cabecalho(conteudo)
+    except Exception as erro:
+        raise ErroLeitura("Imagem ilegível ou acima do limite de pixels.") from erro
     imagem = cv2.imdecode(np.frombuffer(conteudo, np.uint8), cv2.IMREAD_COLOR)
     if imagem is None:
         raise ErroLeitura("Imagem ilegível.")

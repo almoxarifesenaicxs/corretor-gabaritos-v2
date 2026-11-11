@@ -25,6 +25,15 @@ let result = null,
   cameraRequest = 0;
 let processGeneration = 0;
 let namePending = false;
+const pendingOperations = new Map();
+function operationId(kind, payload) {
+  const fingerprint = JSON.stringify(payload);
+  const pending = pendingOperations.get(kind);
+  if (pending?.fingerprint === fingerprint) return pending.id;
+  const id = crypto.randomUUID();
+  pendingOperations.set(kind, { fingerprint, id });
+  return id;
+}
 let students,
   visual,
   visualOfficial = null;
@@ -527,11 +536,13 @@ $("save-evaluation").addEventListener("click", async () => {
     if (!$("confirm-official").checked)
       throw new Error("Confirme o gabarito oficial antes de salvar.");
     setBusy(true, "Salvando avaliação…");
-    await jsonPost("/api/avaliacoes", {
+    const payload = {
       titulo: $("evaluation-name").value.trim(),
       alternativas,
       confirmado: true,
-    });
+    };
+    await jsonPost("/api/avaliacoes", { ...payload, operacao_id: operationId("avaliacao", payload) });
+    pendingOperations.delete("avaliacao");
     invalidateOfficial();
     clearSource();
     $("evaluation-name").value = "";
@@ -550,13 +561,19 @@ $("save-result").addEventListener("click", async () => {
   if (busy || !result || !resultContext || !$("confirm-result").checked) return;
   try {
     setBusy(true, "Salvando correção…");
-    const saved = await jsonPost("/api/correcoes/salvar", {
+    const payload = {
       ...resultContext,
       ...students.saveOptions(),
       resultado: result,
+      respostas: visual.responses,
+      comprovante: visual.comprovante,
       confirmado: true,
       permitir_provisorio: $("allow-provisional").checked,
+    };
+    const saved = await jsonPost("/api/correcoes/salvar", {
+      ...payload, operacao_id: operationId("correcao", payload),
     });
+    pendingOperations.delete("correcao");
     $("saved-result").textContent =
       `Correção salva para ${saved.aluno}. Registro: ${saved.id}`;
     $("saved-result").hidden = false;

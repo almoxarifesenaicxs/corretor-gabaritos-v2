@@ -9,6 +9,8 @@ from app.main import app
 from app.routes.interface import obter_persistencia
 from app.services.persistencia import AlunosAmbiguos, ErroPersistencia
 from test_persistencia import banco, resultado
+from suporte_estabilizacao import entrada_segura
+from uuid import uuid4
 
 
 def salvar(repo, prova, nome='Ana Silva', **kwargs):
@@ -91,17 +93,19 @@ def test_homonimo_explicitamente_confirmado_e_escolha_ambigua(banco):
 
 def test_confirmacao_http_e_ambiguidade_sem_gravacao(banco):
     repo, dados = banco
-    prova = repo.criar_prova('Avaliação')
+    prova = repo.criar_avaliacao('Avaliação', {str(i): 'A' for i in range(1,51)})
     app.dependency_overrides[obter_persistencia] = lambda: repo
     try:
-        http = TestClient(app)
-        body = {'prova_id':prova['id'],'aluno':'Ana Silva','resultado':resultado(),'confirmado':False}
+        http = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
+        body = entrada_segura(prova['id'], confirmado=False)
         assert http.post('/api/correcoes/salvar',json=body).status_code == 422
         assert repo.listar_alunos() == []
         body['confirmado'] = True
         assert http.post('/api/correcoes/salvar',json=body).status_code == 201
+        body['operacao_id'] = uuid4().hex
         body['novo_homonimo'] = True
         segundo = http.post('/api/correcoes/salvar',json=body).json()
+        body['operacao_id'] = uuid4().hex
         body['novo_homonimo'] = False
         antes = deepcopy(dados)
         ambiguo = http.post('/api/correcoes/salvar',json=body)

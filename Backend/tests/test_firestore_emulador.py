@@ -2,6 +2,8 @@
 
 import os
 import socket
+import hashlib
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 import pytest
@@ -9,6 +11,7 @@ import pytest
 from app.database.firestore import conectar_firestore, validar_emulador
 from app.services.persistencia import Persistencia, RegistroExistente
 from test_persistencia import resultado
+from suporte_estabilizacao import entrada_segura
 
 
 def test_ciclo_completo_emulador():
@@ -40,6 +43,19 @@ def test_ciclo_completo_emulador():
             registros.append(("correcoes", correcao["id"]))
             assert repo.consultar_correcao(correcao["id"]) == correcao
             assert repo.listar_correcoes(prova["id"]) == [correcao]
+            operacao = uuid4().hex
+            nome = "Aluno integração " + operacao
+            entrada = entrada_segura(prova["id"], aluno=nome, operacao_id=operacao)
+            registro = repo.salvar_correcao(prova["id"], nome, entrada["resultado"],
+                respostas=entrada["respostas"], comprovante=entrada["comprovante"], operacao_id=operacao)
+            normalizado = " ".join(nome.split()).casefold()
+            controle = hashlib.sha256(normalizado.encode()).hexdigest()
+            registros.extend([("alunos", registro["aluno_id"]), ("nomes_alunos", controle),
+                              ("correcoes", registro["id"]), ("operacoes", "correcao-" + operacao)])
+            repetido = repo.salvar_correcao(prova["id"], nome, entrada["resultado"],
+                respostas=entrada["respostas"], comprovante=entrada["comprovante"], operacao_id=operacao)
+            assert repetido["id"] == registro["id"]
+            assert len(repo.historico_aluno(registro["aluno_id"])["correcoes"]) == 1
         finally:
             # Remove somente os documentos que este teste criou, nunca a base toda.
             for colecao, identificador in reversed(registros):

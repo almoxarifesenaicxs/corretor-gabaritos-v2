@@ -10,6 +10,8 @@ export async function request(url, options = {}) {
     error.details = data?.detail;
     throw error;
   }
+  if (data === null)
+    throw new Error("Resposta incompleta do servidor. Confira o histórico ou reenvie a mesma operação.");
   return data;
 }
 

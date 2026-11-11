@@ -10,6 +10,7 @@ from app.routes.interface import obter_persistencia
 from app.routes import interface
 from app.services.persistencia import RegistroExistente
 from test_persistencia import banco, resultado
+from suporte_estabilizacao import entrada_segura
 
 
 def test_alunos_cadastro_ordenacao_busca_e_duplicatas(banco):
@@ -63,9 +64,9 @@ def test_rotas_alunos_com_banco_simulado(banco):
     repo, _ = banco
     app.dependency_overrides[obter_persistencia] = lambda: repo
     try:
-        http = TestClient(app)
-        prova = repo.criar_prova('Teste')
-        entrada = {'aluno':'Ana Silva','prova_id':prova['id'],'resultado':resultado(),'confirmado':False}
+        http = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
+        prova = repo.criar_avaliacao('Teste', {str(i): 'A' for i in range(1,51)})
+        entrada = entrada_segura(prova['id'], confirmado=False)
         assert http.post('/api/correcoes/salvar',json=entrada).status_code == 422
         assert repo.listar_alunos() == []
         entrada['confirmado'] = True
@@ -77,9 +78,8 @@ def test_rotas_alunos_com_banco_simulado(banco):
         assert http.get('/api/alunos/correspondencias?nome=Ana%20Silva').json()['exato'] == jsonable_encoder(aluno)
         assert len(http.get(f'/api/alunos/{aluno["id"]}/correcoes').json()['correcoes']) == 1
         assert http.get('/api/alunos/ausente/correcoes').status_code == 404
-        prova = repo.criar_prova('Teste')
-        saved = http.post('/api/correcoes/salvar', json={'aluno': aluno['nome'], 'aluno_id': aluno['id'],
-            'prova_id': prova['id'], 'resultado': resultado(), 'confirmado': True})
+        prova = repo.criar_avaliacao('Teste', {str(i): 'A' for i in range(1,51)})
+        saved = http.post('/api/correcoes/salvar', json=entrada_segura(prova['id'], aluno=aluno['nome'], aluno_id=aluno['id']))
         assert saved.status_code == 201
         assert saved.json()['aluno_id'] == aluno['id']
     finally:

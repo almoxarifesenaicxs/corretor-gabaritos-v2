@@ -91,7 +91,7 @@ def test_layout_desconhecido_sem_nome(monkeypatch):
 
 
 def test_rota_nome_mantem_imagem_temporaria_e_nao_salva(monkeypatch, tmp_path):
-    cliente = TestClient(app)
+    cliente = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     temporario = interface.TemporaryDirectory
     monkeypatch.setattr(interface, "TemporaryDirectory", lambda **kwargs: temporario(dir=tmp_path, **kwargs))
     sugestao = {"nome": "MARIA DA SILVA", "estado": "sugerido", "confianca": .99, "mensagem": "Confira"}
@@ -114,5 +114,5 @@ def test_rota_nome_mantem_imagem_temporaria_e_nao_salva(monkeypatch, tmp_path):
 @pytest.mark.parametrize("nome,dados,status", [("invalido.txt", b"abc", 415),
     ("vazio.png", b"", 400), ("ruim.png", b"\x89PNG\r\n\x1a\nruim", 422)])
 def test_rota_nome_rejeita_arquivo_invalido(nome, dados, status):
-    resposta = TestClient(app).post('/api/alunos/reconhecer-nome', files={'arquivo': (nome, dados)})
+    resposta = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)).post('/api/alunos/reconhecer-nome', files={'arquivo': (nome, dados)})
     assert resposta.status_code == status

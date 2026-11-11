@@ -140,3 +140,16 @@ test("erros HTTP são mostrados sem fingir sucesso", async () => {
     globalThis.fetch = before;
   }
 });
+
+test("JSON de sucesso truncado não confirma uma gravação", async () => {
+  const before = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => { throw new SyntaxError("JSON truncado"); },
+  });
+  try {
+    await assert.rejects(() => request("/api/correcoes/salvar"), /Resposta incompleta/);
+  } finally {
+    globalThis.fetch = before;
+  }
+});

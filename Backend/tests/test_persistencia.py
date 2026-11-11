@@ -3,7 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from google.api_core.exceptions import AlreadyExists, PermissionDenied
+from google.api_core.exceptions import AlreadyExists, PermissionDenied, Aborted
 from google.cloud.firestore_v1 import _helpers
 import pytest
 
@@ -20,7 +20,7 @@ def resultado(provisorio=False):
 
 
 @pytest.fixture
-def banco():
+def banco(monkeypatch):
     dados = {}
     cliente = MagicMock()
 
@@ -40,11 +40,16 @@ def banco():
                 # Usa o codec real do SDK para simular o armazenamento/recuperação.
                 dados[nome, identificador] = _helpers.decode_dict(_helpers.encode_dict(valor), cliente)
             ref.create.side_effect = criar
-            ref.get.side_effect = lambda: snapshot(dados.get((nome, identificador)))
+            def obter(transaction=None):
+                chave = (nome, identificador)
+                if transaction is not None:
+                    transaction.leituras[chave] = deepcopy(dados.get(chave))
+                return snapshot(dados.get(chave))
+            ref.get.side_effect = obter
             return ref
 
         referencia.document.side_effect = documento
-        referencia.stream.side_effect = lambda: (snapshot(v) for (c, _), v in dados.items() if c == nome)
+        referencia.stream.side_effect = lambda **kwargs: (snapshot(v) for (c, _), v in list(dados.items()) if c == nome)
         def filtrar(*, filter):
             consulta = MagicMock()
             consulta.stream.side_effect = lambda: (snapshot(v) for (c, _), v in dados.items()
@@ -66,6 +71,36 @@ def banco():
         lote.commit.side_effect = commit
         return lote
     cliente.batch.side_effect = batch
+    class TransacaoSimulada:
+        def __init__(self):
+            self.leituras = {}
+            self.escritas = []
+        def create(self, ref, valor):
+            self.escritas.append((True, (ref.colecao, ref.id), deepcopy(valor)))
+        def set(self, ref, valor):
+            self.escritas.append((False, (ref.colecao, ref.id), deepcopy(valor)))
+        def commit(self):
+            if any(dados.get(chave) != antes for chave, antes in self.leituras.items()):
+                raise Aborted('Leitura modificada por outra transação')
+            if any(criar and chave in dados for criar, chave, _ in self.escritas):
+                raise AlreadyExists('Conflito atômico')
+            for _, chave, valor in self.escritas:
+                dados[chave] = _helpers.decode_dict(_helpers.encode_dict(valor), cliente)
+    cliente.transaction.side_effect = lambda **kwargs: TransacaoSimulada()
+    def executar_transacional(funcao):
+        def executar(tx):
+            for tentativa in range(5):
+                tx.leituras.clear()
+                tx.escritas.clear()
+                retorno = funcao(tx)
+                try:
+                    tx.commit()
+                    return retorno
+                except Aborted:
+                    if tentativa == 4:
+                        raise
+        return executar
+    monkeypatch.setattr('app.services.persistencia.transactional', executar_transacional)
     return Persistencia(cliente), dados
 
 

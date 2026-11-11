@@ -13,7 +13,7 @@ from app.services.correcao import corrigir_respostas
 from app.services.reconhecimento import ErroLeitura, reconhecer_imagem
 from test_reconhecimento import cartao
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 URL = "/api/correcoes/processar"
 OFICIAL = {str(i): "A" for i in range(1, 51)}  # Fictício e explícito.
 

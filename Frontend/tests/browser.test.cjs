@@ -42,7 +42,12 @@ async function mockStudents(page) {
     });
   });
   students.corrections = [];
+  const operations = new Map();
   students.commit = (input) => {
+    assert.match(input.operacao_id, /^[0-9a-f-]{36}$/);
+    assert.match(input.comprovante, /^[0-9a-f]{64}$/);
+    assert.equal(Object.keys(input.respostas).length, 50);
+    if (operations.has(input.operacao_id)) return operations.get(input.operacao_id);
     const exact = students.filter(
       (a) => normalize(a.nome) === normalize(input.aluno),
     );
@@ -72,6 +77,7 @@ async function mockStudents(page) {
       situacao: input.resultado.provisorio ? "provisoria" : "sem_pendencias",
     };
     students.corrections.push(record);
+    operations.set(input.operacao_id, record);
     return record;
   };
   await page.route("**/api/correcoes/salvar", (route) => {
@@ -774,5 +780,41 @@ test("page fragments load before initialization and failures keep navigation dis
     assert.equal(await failed.locator('#camera-video').count(), 0);
     assert.deepEqual(apiCalls, []);
     await failed.close();
+  } finally { await browser.close(); }
+});
+
+test("save retries reuse operation after response loss", async () => {
+  const browser = await chromium.launch({executablePath: process.env.QA_CHROME_PATH, headless: true});
+  try {
+    const page = await browser.newPage();
+    const students = await mockStudents(page);
+    await page.route('**/api/avaliacoes', route => route.fulfill({json: [{id: 'retry', titulo: 'Retry', criada_em: '2026-11-01'}]}));
+    const official = Object.fromEntries(Array.from({length: 50}, (_,i) => [String(i+1),'A']));
+    await page.route('**/api/avaliacoes/*/gabarito', route => route.fulfill({json: {alternativas: official}}));
+    const requests = [];
+    await page.route('**/api/correcoes/salvar', async route => {
+      const input = route.request().postDataJSON();
+      requests.push(input);
+      const saved = students.commit(input);
+      if (requests.length === 1) return route.fulfill({status: 201, contentType: 'application/json', body: '{'});
+      return route.fulfill({status: 201, json: saved});
+    });
+    await page.goto(baseURL + '/interface/');
+    await page.locator('[data-tab="correcao"]').click();
+    await page.locator('#evaluation-select').selectOption('retry');
+    await page.locator('#student-name').fill('Aluno Retry');
+    await page.locator('#file-input').setInputFiles(path.join(artifacts, 'cartao.png'));
+    await page.locator('#process-button').click();
+    await page.locator('#result-content').waitFor({state: 'visible'});
+    await page.locator('#confirm-result').check();
+    await page.locator('#save-result').click();
+    await page.locator('#message.error').waitFor();
+    await page.locator('#save-result').click();
+    await page.locator('#saved-result').waitFor({state:'visible'});
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].operacao_id, requests[1].operacao_id);
+    assert.equal(students.length, 1);
+    assert.equal(students.corrections.length, 1);
+    await browser.close();
   } finally { await browser.close(); }
 });

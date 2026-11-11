@@ -13,8 +13,11 @@ from test_correcao import gabarito, respostas
 from test_reconhecimento import cartao
 from app.services.correcao import corrigir_respostas
 from test_captura import folha
+from test_persistencia import banco
+from suporte_estabilizacao import entrada_segura
+from uuid import uuid4
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 
 
 @pytest.fixture
@@ -54,14 +57,14 @@ def test_interface_e_assets_preservam_api():
 
 
 def test_fluxo_avaliacao_requer_confirmacao(repo):
-    entrada = {"titulo": "Avaliação", "alternativas": gabarito(), "confirmado": False}
+    entrada = {"titulo": "Avaliação", "alternativas": gabarito(), "confirmado": False, "operacao_id": uuid4().hex}
     assert client.post("/api/avaliacoes", json=entrada).status_code == 422
     repo.criar_avaliacao.assert_not_called()
     entrada["confirmado"] = True
     repo.criar_avaliacao.return_value = {"id": "prova-1", "titulo": "Avaliação"}
     resposta = client.post("/api/avaliacoes", json=entrada)
     assert resposta.status_code == 201
-    repo.criar_avaliacao.assert_called_once_with("Avaliação", gabarito())
+    repo.criar_avaliacao.assert_called_once_with("Avaliação", gabarito(), operacao_id=entrada["operacao_id"])
     repo.listar_provas.return_value = [resposta.json()]
     assert client.get("/api/avaliacoes").json() == [resposta.json()]
     repo.consultar_gabarito.return_value = {"alternativas": gabarito()}
@@ -86,26 +89,27 @@ def test_reconhecimento_gabarito_e_captura_nao_gravam(repo):
 
 def test_salvar_somente_apos_confirmacao(repo):
     resultado = corrigir_respostas(respostas(), gabarito())
-    entrada = {"prova_id": "prova-1", "aluno": "Aluno", "resultado": resultado, "confirmado": False}
+    entrada = entrada_segura("prova-1", aluno="Aluno", confirmado=False)
     assert client.post("/api/correcoes/salvar", json=entrada).status_code == 422
     repo.salvar_correcao.assert_not_called()
     entrada["confirmado"] = True
     repo.salvar_correcao.return_value = {"id": "correcao-1", **entrada}
     assert client.post("/api/correcoes/salvar", json=entrada).status_code == 201
     repo.salvar_correcao.assert_called_once_with("prova-1", "Aluno", resultado, permitir_provisorio=False,
-                                               vincular_aluno=True, novo_homonimo=False)
+                                               vincular_aluno=True, novo_homonimo=False, respostas=entrada["respostas"],
+                                               comprovante=entrada["comprovante"], operacao_id=entrada["operacao_id"])
 
 
-def test_salvar_provisorio_exige_aceite_no_servico_real(repo):
-    cliente = MagicMock()
-    cliente.collection.return_value.document.return_value.get.return_value.exists = True
-    repo.salvar_correcao.side_effect = Persistencia(cliente).salvar_correcao
+def test_salvar_provisorio_exige_aceite_no_servico_real(repo, banco):
+    real, dados = banco
+    prova = real.criar_avaliacao("Provisoria", gabarito())
+    repo.salvar_correcao.side_effect = real.salvar_correcao
     entrada_respostas = respostas()
     entrada_respostas["1"] = {"resposta": None, "estado": "duvidosa", "alternativas": ["A"]}
-    entrada = {"prova_id": "prova-1", "aluno": "Aluno", "confirmado": True,
-               "resultado": corrigir_respostas(entrada_respostas, gabarito())}
+    entrada = entrada_segura(prova["id"], respostas=entrada_respostas)
+    antes = dict(dados)
     assert client.post("/api/correcoes/salvar", json=entrada).status_code == 422
-    cliente.collection.return_value.document.return_value.create.assert_not_called()
+    assert dados == antes
     entrada["permitir_provisorio"] = True
     resposta = client.post("/api/correcoes/salvar", json=entrada)
     assert resposta.status_code == 201
@@ -116,7 +120,7 @@ def test_salvar_provisorio_exige_aceite_no_servico_real(repo):
 def test_cadastro_invalido_http_usa_validacao_motor(repo):
     cliente = MagicMock()
     repo.criar_avaliacao.side_effect = Persistencia(cliente).criar_avaliacao
-    resposta = client.post("/api/avaliacoes", json={"titulo": "Teste", "alternativas": {}, "confirmado": True})
+    resposta = client.post("/api/avaliacoes", json={"titulo": "Teste", "alternativas": {}, "confirmado": True, "operacao_id": uuid4().hex})
     assert resposta.status_code == 422
     cliente.batch.assert_not_called()
 
@@ -151,7 +155,7 @@ def test_sem_emulador_responde_503_sem_conexao(monkeypatch):
                                         (ErroPersistencia("privado"), 503), (ValueError("privado"), 422)])
 def test_erros_persistencia(repo, erro, status):
     repo.criar_avaliacao.side_effect = erro
-    resposta = client.post("/api/avaliacoes", json={"titulo": "Teste", "alternativas": gabarito(), "confirmado": True})
+    resposta = client.post("/api/avaliacoes", json={"titulo": "Teste", "alternativas": gabarito(), "confirmado": True, "operacao_id": uuid4().hex})
     assert resposta.status_code == status
     assert "privado" not in resposta.text
 

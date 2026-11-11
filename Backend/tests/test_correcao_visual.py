@@ -75,7 +75,7 @@ def test_falha_de_geometria_nao_inventa_posicoes(monkeypatch):
 
 def test_endpoint_visual_e_revisao_manual():
     import json
-    http = TestClient(app)
+    http = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     resposta = http.post('/api/correcoes/processar', files={'arquivo': ('cartao.png', cv2.imencode('.png', imagem_mista())[1].tobytes())},
                          data={'gabarito': json.dumps(OFICIAL), 'visual': 'true'})
     assert resposta.status_code == 200

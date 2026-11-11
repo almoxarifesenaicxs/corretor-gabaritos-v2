@@ -12,6 +12,7 @@ from app.services.reconhecimento import ErroLeitura, reconhecer_arquivo
 from app.services.captura import retificar_captura
 from app.services.reconhecimento import carregar_imagem
 from app.services.correcao_visual import preparar_visualizacao, classificar_questoes
+from app.services.integridade import assinar_respostas
 
 router = APIRouter(prefix="/api/correcoes", tags=["Correções"])
 LIMITE_UPLOAD = 10 * 1024 * 1024
@@ -81,6 +82,7 @@ def processar(
             resultado = corrigir_respostas(reconhecidas, oficial)
             if visual:
                 return {"resultado": resultado, "respostas": reconhecidas,
+                        "comprovante": assinar_respostas(reconhecidas, oficial),
                         "marcacoes": classificar_questoes(reconhecidas, oficial),
                         "visualizacao": preparar_visualizacao(carregar_imagem(caminho))}
             return resultado

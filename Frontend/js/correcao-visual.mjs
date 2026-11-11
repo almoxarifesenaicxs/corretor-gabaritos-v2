@@ -78,6 +78,7 @@ export class VisualCorrection {
     this.clear();
     this.original = structuredClone(data.respostas);
     this.responses = structuredClone(data.respostas);
+    this.comprovante = data.comprovante;
     this.positions = data.visualizacao.posicoes;
     this.marks = data.marcacoes;
     this.status.textContent = data.visualizacao.mensagem;
@@ -132,6 +133,7 @@ export class VisualCorrection {
           try {
             const reviewed = await this.onReview(updated);
             this.responses = updated;
+            this.comprovante = reviewed.comprovante;
             this.marks = reviewed.marcacoes;
             accepted = select.value;
             this.redraw();

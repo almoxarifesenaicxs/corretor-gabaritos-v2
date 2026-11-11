@@ -19,6 +19,7 @@ from app.services.reconhecimento import carregar_imagem
 from app.services.nome_aluno import ler_nome
 from app.services.correcao import corrigir_respostas
 from app.services.correcao_visual import classificar_questoes
+from app.services.integridade import assinar_respostas
 
 router = APIRouter(prefix="/api", tags=["Interface"])
 
@@ -75,6 +76,7 @@ class AvaliacaoEntrada(BaseModel):
     titulo: str = Field(min_length=1, max_length=160)
     alternativas: dict
     confirmado: StrictBool
+    operacao_id: str = Field(pattern=r"^[a-fA-F0-9-]{32,36}$")
 
 
 class CorrecaoEntrada(BaseModel):
@@ -82,6 +84,9 @@ class CorrecaoEntrada(BaseModel):
     prova_id: str = Field(min_length=1, max_length=1500)
     aluno: str = Field(min_length=1, max_length=200)
     resultado: dict
+    respostas: dict
+    comprovante: str = Field(pattern=r"^[0-9a-f]{64}$")
+    operacao_id: str = Field(pattern=r"^[a-fA-F0-9-]{32,36}$")
     confirmado: StrictBool
     permitir_provisorio: StrictBool = False
     aluno_id: str | None = Field(default=None, min_length=1, max_length=1500)
@@ -116,6 +121,7 @@ def historico_aluno(aluno_id: str, repo: Repo):
 def recalcular_correcao(entrada: RevisaoEntrada):
     try:
         return {"resultado": corrigir_respostas(entrada.respostas, entrada.gabarito),
+                "comprovante": assinar_respostas(entrada.respostas, entrada.gabarito),
                 "marcacoes": classificar_questoes(entrada.respostas, entrada.gabarito)}
     except ValueError:
         raise HTTPException(422, "Respostas ou gabarito inválidos para revisão.") from None
@@ -130,7 +136,7 @@ def listar_avaliacoes(repo: Repo):
 def criar_avaliacao(entrada: AvaliacaoEntrada, repo: Repo):
     if not entrada.confirmado:
         raise HTTPException(422, "Confirme as 50 alternativas antes de cadastrar a avaliação.")
-    return repo.criar_avaliacao(entrada.titulo, entrada.alternativas)
+    return repo.criar_avaliacao(entrada.titulo, entrada.alternativas, operacao_id=entrada.operacao_id)
 
 
 @router.get("/avaliacoes/{prova_id}/gabarito")
@@ -148,6 +154,8 @@ def salvar_correcao(entrada: CorrecaoEntrada, repo: Repo):
     vinculo = {"aluno_id": entrada.aluno_id} if entrada.aluno_id is not None else {}
     try:
         return repo.salvar_correcao(entrada.prova_id, entrada.aluno, entrada.resultado,
+                                   respostas=entrada.respostas, comprovante=entrada.comprovante,
+                                   operacao_id=entrada.operacao_id,
                                    permitir_provisorio=entrada.permitir_provisorio,
                                    vincular_aluno=True, novo_homonimo=entrada.novo_homonimo, **vinculo)
     except AlunosAmbiguos as erro:

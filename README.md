@@ -197,7 +197,7 @@ python -m venv .venv
 Inicie a API:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers --workers 1
 ```
 
 Endereços locais:
@@ -210,6 +210,11 @@ Endereços locais:
 O endpoint `POST /api/correcoes/processar` recebe um cartão PDF/JPG/PNG e um gabarito oficial explícito em JSON, realizando o processamento e retornando o resultado.
 
 As instruções específicas de configuração do Firestore estão em `docs/firebase.md`.
+
+A aplicação permanece restrita ao acesso local, sem autenticação: não publicar,
+expor por proxy ou túnel. Após a estabilização, o salvamento exige respostas,
+comprovante e UUID de operação; os limites de upload e o protocolo idempotente
+estão documentados em [docs/estabilizacao.md](docs/estabilizacao.md).
 
 ## Testes automatizados
 

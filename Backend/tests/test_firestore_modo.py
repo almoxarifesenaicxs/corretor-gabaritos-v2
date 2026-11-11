@@ -31,7 +31,7 @@ def test_modo_desconhecido_sem_fallback(monkeypatch, modo):
     monkeypatch.setenv("FIRESTORE_MODO", modo)
     abrir = MagicMock()
     monkeypatch.setattr(interface, "conectar_firestore", abrir)
-    assert TestClient(app).get('/api/avaliacoes').status_code == 503
+    assert TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)).get('/api/avaliacoes').status_code == 503
     abrir.assert_not_called()
 
 
