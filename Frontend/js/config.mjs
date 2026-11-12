@@ -5,3 +5,6 @@
 export const API_BASE_URL = "https://corretor-gabaritos-8yal.onrender.com";
 // Chave pública do aplicativo Web Firebase (não é uma credencial administrativa).
 export const FIREBASE_API_KEY = "";
+export const FIREBASE_AUTH_DOMAIN = "";
+export const FIREBASE_PROJECT_ID = "";
+export const FIREBASE_APP_ID = "";

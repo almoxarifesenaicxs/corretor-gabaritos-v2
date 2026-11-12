@@ -69,6 +69,11 @@ export class VisualCorrection {
   clear() {
     this.generation++;
     this.image = null;
+    this.original = null;
+    this.responses = null;
+    this.comprovante = null;
+    this.positions = null;
+    this.marks = null;
     this.grid.replaceChildren();
     this.canvas.hidden = true;
     this.canvas.width = 1;
@@ -95,8 +100,9 @@ export class VisualCorrection {
         this.canvas.hidden = false;
         this.redraw();
       } catch {
-        this.status.textContent =
-          "Imagem indisponível. Use a conferência textual.";
+        if (generation === this.generation)
+          this.status.textContent =
+            "Imagem indisponível. Use a conferência textual.";
       }
     }
     if (generation !== this.generation) return;
@@ -132,6 +138,8 @@ export class VisualCorrection {
           updated[number] = manualAnswer(this.original[number], select.value);
           try {
             const reviewed = await this.onReview(updated);
+            if (generation !== this.generation) return;
+            if (!reviewed) { select.value = accepted; return; }
             this.responses = updated;
             this.comprovante = reviewed.comprovante;
             this.marks = reviewed.marcacoes;

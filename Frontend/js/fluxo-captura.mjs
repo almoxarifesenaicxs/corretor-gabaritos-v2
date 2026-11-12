@@ -7,6 +7,7 @@ import {
   jsonPost,
   validateFile,
   officialFromSelections,
+  isApiAccessAllowed,
 } from "./api.mjs";
 import { Camera, cameraError } from "./camera.mjs";
 import { StudentNameReader } from "./nome-aluno.mjs";
@@ -25,6 +26,9 @@ let result = null,
   state = "vermelho",
   cameraRequest = 0;
 let processGeneration = 0;
+let sessionGeneration = 0;
+const sessionCurrent = (generation) =>
+  generation === sessionGeneration && isApiAccessAllowed();
 let namePending = false;
 const pendingOperations = new Map();
 function operationId(kind, payload) {
@@ -216,6 +220,7 @@ visual = new VisualCorrection({
   grid: $("student-answer-grid"),
   status: $("visual-status"),
   onReview: async (respostas) => {
+    const session = sessionGeneration;
     const previous = result;
     result = null;
     $("confirm-result").checked = false;
@@ -226,17 +231,20 @@ visual = new VisualCorrection({
         respostas,
         gabarito: visualOfficial,
       });
+      if (!sessionCurrent(session)) return null;
       showResult(reviewed.resultado);
       message(
         "Resposta revisada. Nota e marcações atualizadas. Confira e confirme novamente.",
       );
       return reviewed;
     } catch (error) {
-      result = previous;
-      message(error.message, true);
+      if (sessionCurrent(session)) {
+        result = previous;
+        message(error.message, true);
+      }
       throw error;
     } finally {
-      setBusy(false);
+      if (sessionCurrent(session)) setBusy(false);
     }
   },
 });
@@ -330,7 +338,8 @@ async function startCamera() {
       );
       if (selected) $("camera-select").value = selected;
     } catch {
-      message("Câmera ativa; a lista de dispositivos não está disponível.");
+      if (requestId === cameraRequest)
+        message("Câmera ativa; a lista de dispositivos não está disponível.");
     }
   } catch (error) {
     if (requestId === cameraRequest) {
@@ -362,7 +371,7 @@ $("capture-button").addEventListener("click", async () => {
         : "Captura manual: o enquadramento não foi validado. Confira os quatro cantos e revise a leitura com atenção.",
     );
   } catch (error) {
-    message(error.message, true);
+    if (generation === camera.generation) message(error.message, true);
   }
 });
 $("file-input").addEventListener("change", (event) => {
@@ -427,9 +436,12 @@ document
   );
 
 async function loadEvaluations() {
+  const session = sessionGeneration;
   $("refresh-evaluations").disabled = true;
   try {
-    evaluations = await request("/api/avaliacoes");
+    const loaded = await request("/api/avaliacoes");
+    if (!sessionCurrent(session)) return;
+    evaluations = loaded;
     const selected = $("evaluation-select").value;
     $("evaluation-select").replaceChildren(
       new Option("Selecione uma avaliação", ""),
@@ -466,16 +478,19 @@ async function loadEvaluations() {
       $("evaluation-list").append(item);
     }
   } catch (error) {
-    $("evaluation-list").textContent = error.message;
-    message(error.message, true);
+    if (sessionCurrent(session)) {
+      $("evaluation-list").textContent = error.message;
+      message(error.message, true);
+    }
   } finally {
-    $("refresh-evaluations").disabled = false;
+    if (sessionCurrent(session)) $("refresh-evaluations").disabled = false;
   }
 }
 $("refresh-evaluations").addEventListener("click", loadEvaluations);
 
 $("process-button").addEventListener("click", async () => {
   if (!source || busy) return;
+  const session = sessionGeneration;
   const generation = ++processGeneration;
   const context = {
     prova_id: $("evaluation-select").value,
@@ -498,7 +513,7 @@ $("process-button").addEventListener("click", async () => {
       const recognized = await upload("/api/gabaritos/reconhecer", source, {
         captura: sourceIsCapture,
       });
-      if (generation === processGeneration) {
+      if (generation === processGeneration && sessionCurrent(session)) {
         renderOfficial(recognized, updateButtons);
         message(
           "Leitura concluída. Confira as 50 alternativas antes de confirmar o gabarito.",
@@ -508,29 +523,32 @@ $("process-button").addEventListener("click", async () => {
       const official = await request(
         `/api/avaliacoes/${encodeURIComponent(context.prova_id)}/gabarito`,
       );
+      if (!sessionCurrent(session)) return;
       const data = await upload("/api/correcoes/processar", source, {
         gabarito: JSON.stringify(official.alternativas),
         captura: sourceIsCapture,
         visual: true,
       });
-      if (generation === processGeneration) {
+      if (generation === processGeneration && sessionCurrent(session)) {
         showResult(data.resultado);
         resultContext = context;
         visualOfficial = official.alternativas;
         $("visual-panel").hidden = false;
         await visual.load(data);
-        message("Correção concluída. O resultado ainda não foi salvo.");
+        if (generation === processGeneration && sessionCurrent(session))
+          message("Correção concluída. O resultado ainda não foi salvo.");
       }
     }
   } catch (error) {
-    message(error.message, true);
+    if (generation === processGeneration && sessionCurrent(session)) message(error.message, true);
   } finally {
-    setBusy(false);
+    if (generation === processGeneration && sessionCurrent(session)) setBusy(false);
   }
 });
 
 $("save-evaluation").addEventListener("click", async () => {
   if (busy) return;
+  const session = sessionGeneration;
   try {
     const selects = [...document.querySelectorAll("[data-question]")].sort(
       (a, b) => Number(a.dataset.question) - Number(b.dataset.question),
@@ -547,23 +565,26 @@ $("save-evaluation").addEventListener("click", async () => {
       confirmado: true,
     };
     await jsonPost("/api/avaliacoes", { ...payload, operacao_id: operationId("avaliacao", payload) });
+    if (!sessionCurrent(session)) return;
     pendingOperations.delete("avaliacao");
     invalidateOfficial();
     clearSource();
     $("evaluation-name").value = "";
     await loadEvaluations();
+    if (!sessionCurrent(session)) return;
     message(
       "Avaliação e gabarito oficial salvos. Você já pode corrigir os cartões.",
     );
   } catch (error) {
-    message(error.message, true);
+    if (sessionCurrent(session)) message(error.message, true);
   } finally {
-    setBusy(false);
+    if (sessionCurrent(session)) setBusy(false);
   }
 });
 
 $("save-result").addEventListener("click", async () => {
   if (busy || !result || !resultContext || !$("confirm-result").checked) return;
+  const session = sessionGeneration;
   try {
     setBusy(true, "Salvando correção…");
     const payload = {
@@ -578,6 +599,7 @@ $("save-result").addEventListener("click", async () => {
     const saved = await jsonPost("/api/correcoes/salvar", {
       ...payload, operacao_id: operationId("correcao", payload),
     });
+    if (!sessionCurrent(session)) return;
     pendingOperations.delete("correcao");
     $("saved-result").textContent =
       `Correção salva para ${saved.aluno}. Registro: ${saved.id}`;
@@ -586,13 +608,15 @@ $("save-result").addEventListener("click", async () => {
     // Mantém a exibição, mas impede repetir o salvamento acidentalmente.
     result = null;
     await students.load();
+    if (!sessionCurrent(session)) return;
     await students.refreshMatches();
   } catch (error) {
+    if (!sessionCurrent(session)) return;
     if (error.details?.codigo === "aluno_ambiguo")
       students.showAmbiguity(error.details.alunos);
     message(error.message, true);
   } finally {
-    setBusy(false);
+    if (sessionCurrent(session)) setBusy(false);
   }
 });
 for (const id of [
@@ -608,6 +632,38 @@ for (const id of ["evaluation-select", "student-name"])
   });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopCamera();
+});
+window.addEventListener("corretor:session-ended", () => {
+  sessionGeneration++;
+  stopCamera();
+  clearSource();
+  processGeneration++;
+  setBusy(false);
+  $("refresh-evaluations").disabled = false;
+  evaluations = [];
+  pendingOperations.clear();
+  students?.clear();
+  invalidateResult();
+  invalidateOfficial();
+  $("evaluation-list").replaceChildren();
+  $("evaluation-select").replaceChildren();
+  $("evaluation-name").value = "";
+  $("student-name").value = "";
+  $("total-score").textContent = "";
+  $("total-percent").textContent = "";
+  $("result-counts").replaceChildren();
+  $("discipline-results").replaceChildren();
+  $("pending-list").textContent = "";
+  $("visual-status").textContent = "";
+  $("saved-result").textContent = "";
+  message("");
+});
+window.addEventListener("corretor:session-paused", () => {
+  sessionGeneration++;
+  stopCamera();
+  processGeneration++;
+  setBusy(false);
+  $("refresh-evaluations").disabled = false;
 });
 window.addEventListener("pagehide", () => {
   stopCamera();

@@ -9,8 +9,13 @@
     <script type="module" src="js/app.mjs"></script>
   </head>
   <body inert class="login-required">
-    <section id="login-panel" aria-labelledby="login-title">
-      <form id="login-form" class="login-card">
+    <section id="login-panel" aria-label="Acesso ao Corretor de Gabaritos">
+      <div id="session-wait" class="login-card" role="status" aria-live="polite">
+        <h1>Corretor de Gabaritos</h1>
+        <p id="session-status">Verificando sessão…</p>
+        <button id="session-retry" type="button" hidden>Tentar novamente</button>
+      </div>
+      <form id="login-form" class="login-card" hidden>
         <h1 id="login-title">Corretor de Gabaritos</h1>
         <p>Entre com sua conta autorizada.</p>
         <label for="login-email">E-mail</label>

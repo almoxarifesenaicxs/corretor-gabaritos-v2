@@ -48,6 +48,146 @@ test("login bloqueia telas, envia Bearer e logout elimina a sessão", async () =
   } finally { await browser.close(); }
 });
 
+test("sessão persistida restaura após atualizar e reabrir sem expor dashboard durante a espera", async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(baseURL + "/interface/#alunos");
+    await login(page);
+    await page.locator("#students-panel").waitFor();
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    let requested;
+    const started = new Promise(resolve => { requested = resolve; });
+    await page.route("**/api/auth/me", async route => {
+      requested();
+      await pending;
+      await route.fulfill({ json: { uid: "admin-simulado" } });
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await started;
+    assert.equal(await page.locator("#session-wait").isVisible(), true);
+    assert.equal(await page.locator("#login-form").isVisible(), false);
+    assert.equal(await page.locator('[data-tab="alunos"]').isVisible(), false);
+    assert.equal(await page.locator("#camera-video").count(), 0);
+    release();
+    await page.locator("#students-panel").waitFor();
+    assert.equal(new URL(page.url()).hash, "#alunos");
+    await page.close();
+    const reopened = await context.newPage();
+    await reopened.goto(baseURL + "/interface/#correcao");
+    await reopened.locator("#correction-fields").waitFor();
+    assert.equal(await reopened.locator("#login-panel").isHidden(), true);
+    assert.equal(new URL(reopened.url()).hash, "#correcao");
+    await context.close();
+  } finally { await browser.close(); }
+});
+
+test("API temporariamente indisponível bloqueia restauração e permite tentar novamente", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(baseURL + "/interface/");
+    await login(page);
+    await page.locator("#evaluation-fields").waitFor();
+    let calls = 0;
+    await page.route("**/api/auth/me", route => {
+      calls++;
+      return route.fulfill(calls === 1
+        ? { status: 503, json: { detail: "Indisponível." } }
+        : { json: { uid: "admin-simulado" } });
+    });
+    await page.reload();
+    await page.locator("#session-retry").waitFor({ state: "visible" });
+    assert.equal(await page.locator('[data-tab="avaliacoes"]').isVisible(), false);
+    assert.equal(await page.locator("#login-form").isVisible(), false);
+    await page.locator("#session-retry").click();
+    await page.locator("#evaluation-fields").waitFor();
+    assert.equal(calls, 2);
+  } finally { await browser.close(); }
+});
+
+test("logout em outra aba oculta e descarta os dados já carregados", async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage();
+    await first.goto(baseURL + "/interface/");
+    await login(first);
+    await first.locator("#evaluation-fields").waitFor();
+    const second = await context.newPage();
+    await second.route("**/api/alunos?*", route => route.fulfill({ json: [
+      { id: "aluno-sintetico", nome: "Aluno Sintético" },
+    ] }));
+    await second.goto(baseURL + "/interface/#alunos");
+    await second.getByText("Aluno Sintético").waitFor();
+    await first.locator("#logout").click();
+    await second.locator("#login-form").waitFor({ state: "visible" });
+    assert.equal(await second.locator('[data-tab="alunos"]').isVisible(), false);
+    assert.equal(await second.locator("#students-list").count(), 0);
+    assert.equal(await second.evaluate(() => localStorage.getItem("firebase-auth-simulado")), null);
+    await context.close();
+  } finally { await browser.close(); }
+});
+
+test("troca de usuário em outra aba exige nova autorização antes de mostrar dados", async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage();
+    await first.goto(baseURL + "/interface/");
+    await login(first);
+    await first.locator("#evaluation-fields").waitFor();
+    const second = await context.newPage();
+    await second.goto(baseURL + "/interface/#alunos");
+    await second.locator("#students-panel").waitFor();
+    await first.evaluate(() => localStorage.setItem("firebase-auth-simulado", "outro-uid"));
+    await second.locator("#login-form").waitFor({ state: "visible" });
+    assert.equal(await second.locator('[data-tab="alunos"]').isVisible(), false);
+    assert.equal(await second.locator("#camera-video").count(), 0);
+    await context.close();
+  } finally { await browser.close(); }
+});
+
+test("retorno à janela revalida antes de mostrar dados e preserva sessão após 503", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(baseURL + "/interface/");
+    await login(page);
+    await page.locator("#evaluation-fields").waitFor();
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    let requested;
+    const started = new Promise(resolve => { requested = resolve; });
+    let calls = 0;
+    await page.route("**/api/auth/me", async route => {
+      calls++;
+      if (calls === 1) {
+        requested();
+        await pending;
+        return route.fulfill({ status: 503, json: { detail: "Indisponível." } });
+      }
+      return route.fulfill({ json: { uid: "admin-simulado" } });
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await page.waitForTimeout(1100);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await started;
+    assert.equal(await page.locator("#session-wait").isVisible(), true);
+    assert.equal(await page.locator("#evaluation-fields").isVisible(), false);
+    release();
+    await page.locator("#session-retry").waitFor({ state: "visible" });
+    assert.equal(await page.evaluate(() => localStorage.getItem("firebase-auth-simulado")),
+      "id-token-simulado-sem-validade");
+    await page.locator("#session-retry").click();
+    await page.locator("#evaluation-fields").waitFor();
+    assert.equal(await page.locator("#evaluation-name").isEnabled(), true);
+    assert.equal(calls, 2);
+  } finally { await browser.close(); }
+});
+
 for (const status of [401, 403]) {
   test(`login rejeitado por ${status} não carrega dados administrativos`, async () => {
     const browser = await chromium.launch();
@@ -60,7 +200,8 @@ for (const status of [401, 403]) {
       await page.route('**/api/auth/me', route => route.fulfill({ status, json: { detail: 'Acesso negado simulado.' } }));
       await page.goto(baseURL + '/interface/');
       await login(page);
-      await page.waitForFunction(() => document.querySelector('#login-message').textContent === 'Acesso negado simulado.');
+      await page.waitForFunction(expected => document.querySelector('#login-message').textContent.includes(expected),
+        status === 401 ? 'Sessão expirada' : 'Acesso negado simulado.');
       assert.equal(await page.locator('#login-panel').isVisible(), true);
       assert.equal(await page.locator('#camera-video').count(), 0);
       assert.deepEqual(calls, ['/api/auth/me']);
@@ -200,6 +341,60 @@ async function mockStudents(page) {
   );
   return students;
 }
+
+test("revisão tardia não restaura dados após o encerramento da sessão", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const official = Object.fromEntries(
+      Array.from({ length: 50 }, (_, i) => [String(i + 1), "A"]),
+    );
+    await page.route("**/api/avaliacoes", route => route.fulfill({ json: [
+      { id: "avaliacao-visual", titulo: "Teste visual", criada_em: "2026-10-31T12:00:00Z" },
+    ] }));
+    await page.route("**/api/avaliacoes/*/gabarito", route =>
+      route.fulfill({ json: { alternativas: official } }));
+    await page.goto(baseURL + "/interface/");
+    await login(page);
+    await page.locator('[data-tab="correcao"]').click();
+    await page.locator("#evaluation-select").selectOption("avaliacao-visual");
+    await page.locator("#student-name").fill("Aluno Simulado");
+    await page.locator("#file-input").setInputFiles(path.join(artifacts, "visual-mista.png"));
+    await page.locator("#process-button").click();
+    await page.locator('[data-student-question="2"]').waitFor();
+    let release, started;
+    const pending = new Promise(resolve => { release = resolve; });
+    const requested = new Promise(resolve => { started = resolve; });
+    let reviewCalls = 0;
+    await page.route("**/api/correcoes/recalcular", async route => {
+      reviewCalls++;
+      if (reviewCalls === 2) {
+        started();
+        await pending;
+      }
+      await route.fulfill({ status: 503, json: { detail: "Falha de revisão simulada" } });
+    });
+    await page.locator('[data-student-question="2"]').selectOption("A");
+    await page.getByText("Falha de revisão simulada").waitFor();
+    assert.equal(await page.locator("#total-score").textContent(), "1");
+    assert.equal(await page.locator('[data-student-question="2"]').inputValue(), "original");
+    await page.locator('[data-student-question="2"]').selectOption("A");
+    await requested;
+    await page.evaluate(async () => {
+      const { setApiAccess } = await import("./js/api.mjs");
+      setApiAccess(false);
+      window.dispatchEvent(new Event("corretor:session-ended"));
+    });
+    release();
+    await page.waitForResponse(response => response.url().endsWith("/api/correcoes/recalcular"));
+    assert.equal(await page.locator("#result-content").isVisible(), false);
+    assert.equal(await page.locator("#student-answer-grid").count(), 1);
+    assert.equal(await page.locator("#student-answer-grid").textContent(), "");
+    assert.equal(await page.locator("#total-score").textContent(), "");
+    assert.equal(await page.locator("#message").textContent(), "");
+    assert.equal(await page.locator("#save-result").isDisabled(), true);
+  } finally { await browser.close(); }
+});
 
 test("automatic student creation only on save and visual review", async () => {
   const browser = await chromium.launch({

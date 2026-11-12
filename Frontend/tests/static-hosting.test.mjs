@@ -122,7 +122,14 @@ test("401 e 403 sem JSON retornam mensagem explícita e encerram sessão", async
 });
 
 test("falha de rede no Firebase exibe mensagem sem autenticar", async () => {
-  const auth = createAuth({ apiKey: "publica-ficticia", fetcher: async () => { throw new TypeError("Failed to fetch"); } });
+  const auth = createAuth({ apiKey: "publica-ficticia", authDomain: "demo.example.test",
+    projectId: "demo-corretor", appId: "1:000:web:teste", sdkLoader: async () => ({
+      browserLocalPersistence: { type: "LOCAL" }, initializeApp: () => ({}),
+      initializeAuth: () => ({ currentUser: null, authStateReady: async () => {} }),
+      signOut: async () => {}, signInWithEmailAndPassword: async () => {
+        throw { code: "auth/network-request-failed" };
+      },
+    }) });
   await assert.rejects(() => auth.login("teste@example.test", "ficticia"), /serviço de login/);
   assert.equal(await auth.getToken(), null);
 });
@@ -140,6 +147,7 @@ test("Vercel usa saída estática, preserva câmera e não encaminha API", async
   const ignores = await read(".vercelignore");
   for (const name of ["tests/", ".env", ".secrets/", "js/script.js"]) assert.ok(ignores.split(/\r?\n/).includes(name));
   const publicConfig = await read("js/config.mjs");
-  assert.deepEqual([...publicConfig.matchAll(/export const (\w+)/g)].map(([, name]) => name), ["API_BASE_URL", "FIREBASE_API_KEY"]);
+  assert.deepEqual([...publicConfig.matchAll(/export const (\w+)/g)].map(([, name]) => name),
+    ["API_BASE_URL", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_PROJECT_ID", "FIREBASE_APP_ID"]);
   assert.doesNotMatch(publicConfig, /BEGIN PRIVATE KEY|private_key\s*[:=]|refreshToken\s*[:=]/);
 });

@@ -1,49 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createAuth, authSession } from "../js/auth.mjs";
-import { request, upload } from "../js/api.mjs";
+import { request, upload, setApiAccess } from "../js/api.mjs";
 
-const loginData = { idToken: "token-simulado", refreshToken: "refresh-simulado", expiresIn: "3600" };
-test("login usa Firebase REST e renova token apenas em memória", async () => {
-  let clock = 0;
-  const calls = [];
-  const auth = createAuth({ apiKey: "chave-publica-teste", now: () => clock, fetcher: async (url, options) => {
-    calls.push([url, options]);
-    return { ok: true, json: async () => calls.length === 1 ? loginData :
-      { id_token: "renovado", refresh_token: "refresh-novo", expires_in: "3600" } };
-  } });
-  assert.equal(await auth.getToken(), null);
-  await auth.login("teste@example.test", "senha-ficticia");
-  assert.equal(await auth.getToken(), "token-simulado");
-  assert.match(calls[0][0], /^https:\/\/identitytoolkit.googleapis.com/);
-  assert.equal(JSON.parse(calls[0][1].body).returnSecureToken, true);
-  clock = 3600000;
-  assert.deepEqual(await Promise.all([auth.getToken(), auth.getToken()]), ["renovado", "renovado"]);
-  assert.equal(calls.length, 2);
-  auth.logout();
-  assert.equal(await auth.getToken(), null);
-});
-
-test("falha de login e renovação não preservam sessão", async () => {
-  let fail = false;
-  const auth = createAuth({ apiKey: "teste", fetcher: async () => ({ ok: !fail,
-    json: async () => ({ ...loginData, expiresIn: "1" }) }) });
-  await auth.login("teste@example.test", "ficticia");
-  fail = true;
-  await assert.rejects(() => auth.getToken());
-  assert.equal(await auth.getToken(), null);
-  await assert.rejects(() => auth.login("teste@example.test", "ficticia"));
-  assert.equal(await auth.getToken(), null);
-  await assert.rejects(() => createAuth({ apiKey: "" }).login("a", "b"), /Configure/);
-});
-
-test("logout durante login impede restaurar sessão", async () => {
-  let finish;
-  const auth = createAuth({ apiKey: "teste", fetcher: () => new Promise(resolve => { finish = resolve; }) });
-  const pending = auth.login("teste@example.test", "ficticia");
-  auth.logout();
-  finish({ ok: true, json: async () => loginData });
-  await assert.rejects(() => pending, /cancelado/);
+test("configuração ausente não carrega o Firebase", async () => {
+  const auth = createAuth({ sdkLoader: () => { throw new Error("Não deve carregar SDK"); } });
+  await assert.rejects(() => auth.login("a", "b"), /Configure/);
   assert.equal(await auth.getToken(), null);
 });
 
@@ -74,4 +36,52 @@ test("401 e 403 encerram sessão sem repetir operações", async (t) => {
   await assert.rejects(() => request("/api/avaliacoes"), /negado/);
   assert.equal(ended, 2);
   assert.equal(calls, 2);
+});
+
+for (const status of [401, 403]) {
+  for (const [scenario, reopen] of [
+    ["logout", false],
+    ["troca de usuário", true],
+    ["revalidação", false],
+    ["nova sessão autorizada", true],
+  ]) {
+    test(`resposta ${status} antiga após ${scenario} não encerra a sessão atual`, async (t) => {
+      let release, started;
+      const pending = new Promise(resolve => { release = resolve; });
+      const requested = new Promise(resolve => { started = resolve; });
+      let logouts = 0;
+      t.mock.method(authSession, "getToken", async () => "token-simulado");
+      t.mock.method(authSession, "logout", async () => { logouts++; });
+      t.mock.method(globalThis, "fetch", async () => {
+        started();
+        await pending;
+        return { ok: false, status, json: async () => ({ detail: "Erro da sessão anterior" }) };
+      });
+      setApiAccess(true);
+      const oldRequest = request("/api/avaliacoes");
+      await requested;
+      setApiAccess(false);
+      if (reopen) setApiAccess(true);
+      release();
+      await assert.rejects(oldRequest, /sessão precisa ser validada/);
+      assert.equal(logouts, 0);
+    });
+  }
+}
+
+test("falha de rede antiga não exibe erro da requisição anterior", async (t) => {
+  let rejectFetch, started;
+  const requested = new Promise(resolve => { started = resolve; });
+  t.mock.method(authSession, "getToken", async () => "token-simulado");
+  t.mock.method(globalThis, "fetch", () => {
+    started();
+    return new Promise((_, reject) => { rejectFetch = reject; });
+  });
+  setApiAccess(true);
+  const oldRequest = request("/api/avaliacoes");
+  await requested;
+  setApiAccess(false);
+  setApiAccess(true);
+  rejectFetch(new Error("Detalhe antigo"));
+  await assert.rejects(oldRequest, /sessão precisa ser validada/);
 });

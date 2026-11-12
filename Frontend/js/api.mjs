@@ -1,6 +1,22 @@
 import { API_BASE_URL } from "./config.mjs";
 import { authSession } from "./auth.mjs";
 
+let gateEnabled = false, gateOpen = false, gateEpoch = 0;
+
+// A barreira de interface complementa a autorização obrigatória do backend.
+export function setApiAccess(open) {
+  gateEnabled = true;
+  gateOpen = Boolean(open);
+  gateEpoch++;
+}
+
+export function isApiAccessAllowed() { return !gateEnabled || gateOpen; }
+
+function checkAccess(path, epoch) {
+  if (path !== "/api/auth/me" && gateEnabled && (!gateOpen || epoch !== gateEpoch))
+    throw new Error("A sessão precisa ser validada antes de continuar.");
+}
+
 export function apiUrl(path, base = API_BASE_URL, pageUrl = globalThis.location?.href) {
   if (typeof path !== "string" || !path.startsWith("/api/") || path.includes("\\"))
     throw new Error("Caminho da API inválido.");
@@ -26,7 +42,10 @@ export function apiUrl(path, base = API_BASE_URL, pageUrl = globalThis.location?
 
 export async function request(url, options = {}) {
   const target = apiUrl(url);
+  const epoch = gateEpoch;
+  checkAccess(url, epoch);
   const token = await authSession.getToken();
+  checkAccess(url, epoch);
   const headers = new Headers(options.headers);
   headers.delete("Authorization");
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -34,11 +53,15 @@ export async function request(url, options = {}) {
   try {
     response = await fetch(target, { ...options, headers, cache: "no-store", redirect: "error" });
   } catch (error) {
+    checkAccess(url, epoch);
     if (error.name === "AbortError") throw error;
     throw new Error("Não foi possível conectar à API. Confira a conexão e tente novamente. Se estava salvando, confira o histórico ou reenvie a mesma operação.");
   }
-  if (response.status === 401 || response.status === 403) authSession.logout();
+  // Uma resposta da geração anterior não pode encerrar a sessão atual.
+  checkAccess(url, epoch);
+  if (response.status === 401 || response.status === 403) await authSession.logout();
   const data = await response.json().catch(() => null);
+  checkAccess(url, epoch);
   if (!response.ok) {
     const detail =
       typeof data?.detail === "string"

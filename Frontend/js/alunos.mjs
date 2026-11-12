@@ -28,6 +28,20 @@ export class Students {
       this.searchTimer = setTimeout(() => this.load(), 300);
     });
   }
+  clear() {
+    clearTimeout(this.matchTimer);
+    clearTimeout(this.searchTimer);
+    this.matchJob++;
+    this.listJob++;
+    this.historyId = null;
+    this.selectedId = null;
+    $("students-list").replaceChildren();
+    $("student-history").replaceChildren();
+    $("student-history-title").textContent = "";
+    $("student-link-select").replaceChildren();
+    $("student-link-status").textContent = "";
+    $("student-search").value = "";
+  }
   select(id) {
     this.selectedId = id;
     this.onSelect(id);
