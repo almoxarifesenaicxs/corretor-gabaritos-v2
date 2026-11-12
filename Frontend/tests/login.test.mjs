@@ -24,7 +24,7 @@ function screen(t) {
 test("login só libera interface após autorização do backend", async (t) => {
   const ui = screen(t);
   t.mock.method(globalThis, "fetch", async (url, options) => {
-    assert.equal(url, "/api/auth/me");
+    assert.equal(url, "https://corretor-gabaritos-8yal.onrender.com/api/auth/me");
     assert.equal(options.headers.get("Authorization"), "Bearer token-simulado");
     assert.equal(ui.elements["login-panel"].hidden, false);
     return { ok: true, status: 200, json: async () => ({ uid: "admin-teste" }) };

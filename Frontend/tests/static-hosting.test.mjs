@@ -138,7 +138,7 @@ test("Vercel usa saída estática, preserva câmera e não encaminha API", async
   assert.equal(headers["Permissions-Policy"], "camera=(self), microphone=()");
   assert.match(headers["Cache-Control"], /must-revalidate/);
   const ignores = await read(".vercelignore");
-  for (const name of ["tests/", ".env", ".secrets/", "js/script.js"]) assert.ok(ignores.split("\n").includes(name));
+  for (const name of ["tests/", ".env", ".secrets/", "js/script.js"]) assert.ok(ignores.split(/\r?\n/).includes(name));
   const publicConfig = await read("js/config.mjs");
   assert.deepEqual([...publicConfig.matchAll(/export const (\w+)/g)].map(([, name]) => name), ["API_BASE_URL", "FIREBASE_API_KEY"]);
   assert.doesNotMatch(publicConfig, /BEGIN PRIVATE KEY|private_key\s*[:=]|refreshToken\s*[:=]/);

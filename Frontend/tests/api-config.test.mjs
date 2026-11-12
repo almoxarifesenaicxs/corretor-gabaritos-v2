@@ -2,9 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { apiUrl, request, jsonPost, upload } from "../js/api.mjs";
 
-test("API usa mesma origem por padrão e origem explícita em outros ambientes", () => {
+const renderOrigin = "https://corretor-gabaritos-8yal.onrender.com";
+
+test("API usa a origem pública por padrão e permite base local explícita", () => {
   const path = "/api/alunos?busca=Ana%20Silva";
-  assert.equal(apiUrl(path), path);
+  assert.equal(apiUrl(path), renderOrigin + path);
+  assert.equal(apiUrl("/api/health"), renderOrigin + "/api/health");
+  assert.equal(apiUrl(path, ""), path);
   assert.equal(apiUrl(path, "http://127.0.0.1:8000/"), "http://127.0.0.1:8000" + path);
   assert.equal(apiUrl(path, "https://api.example"), "https://api.example" + path);
 });
@@ -26,9 +30,10 @@ test("request e JSON mantêm o contrato e o cancelamento", async (t) => {
   const signal = new AbortController().signal;
   await request("/api/alunos", { signal });
   await jsonPost("/api/avaliacoes", { titulo: "Teste" });
-  assert.equal(calls[0][0], "/api/alunos");
+  assert.equal(calls[0][0], renderOrigin + "/api/alunos");
   assert.equal(calls[0][1].signal, signal);
   assert.equal(calls[1][1].headers.get("Content-Type"), "application/json");
+  assert.equal(calls[1][0], renderOrigin + "/api/avaliacoes");
   assert.deepEqual(JSON.parse(calls[1][1].body), { titulo: "Teste" });
 });
 
@@ -43,7 +48,7 @@ test("uploads PDF JPG PNG preservam FormData sem fixar boundary", async (t) => {
     await upload("/api/correcoes/processar", new File(["conteudo"], `cartao.${ext}`),
       { gabarito: '{"1":"A"}', captura: false }, signal);
   for (const [i, [url, options]] of calls.entries()) {
-    assert.equal(url, "/api/correcoes/processar");
+    assert.equal(url, renderOrigin + "/api/correcoes/processar");
     assert.equal(options.method, "POST");
     assert.equal(options.headers.has("Content-Type"), false);
     assert.equal(options.signal, signal);

@@ -25,17 +25,22 @@ credenciais em `Frontend`. Todo arquivo distribuído ao navegador é público.
 
 ## API e Firebase Authentication
 
-Em `Frontend/js/config.mjs`, preencher futuramente:
+`Frontend/js/config.mjs` define a origem pública da API Render:
 
 ```javascript
-export const API_BASE_URL = "https://sua-api.onrender.com";
-export const FIREBASE_API_KEY = "chave-publica-web-do-projeto";
+export const API_BASE_URL = "https://corretor-gabaritos-8yal.onrender.com";
+export const FIREBASE_API_KEY = "";
 ```
 
-São exemplos, não valores reais. A URL contém somente a origem HTTPS, sem `/api`,
+O endereço da API é público; a chave Web Firebase permanece vazia nesta etapa.
+A URL contém somente a origem HTTPS, sem `/api`,
 query, fragmento ou credenciais. `api.mjs` é o único ponto de resolução das chamadas
-da aplicação. Uma página hospedada com base vazia apresenta erro de configuração;
-vazio continua permitido para o modo integrado em localhost/127.0.0.1/IPv6 local.
+da aplicação. Com a URL pública fixa, até a interface executada localmente envia
+as chamadas da API para a Render. Para usar o modo local integrado, configurar
+explicitamente `API_BASE_URL = ""` neste arquivo antes de iniciar a interface local
+e restaurar a URL pública antes de publicar o frontend. Uma página hospedada com
+base vazia apresenta erro de configuração; vazio continua permitido para o modo
+integrado em localhost/127.0.0.1/IPv6 local.
 HTTP não é aceito como API de uma interface HTTPS.
 
 Não há substituição automática por variáveis do painel da Vercel: a configuração
