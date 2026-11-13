@@ -1,16 +1,12 @@
-# Preparação do backend para Render — homologação de infraestrutura (Etapa 19)
+# Preparação do backend para Render
 
-O modo `publico` foi acrescentado para uso sem login, mas **não está ativado no
-Blueprint**. Sua configuração e implicações para dados de alunos estão em
-[acesso sem login](acesso-publico.md). `homologacao` continua restrito ao health check.
-
-Preparação somente: nenhum serviço criado, deploy executado ou produção ativada.
-O `render.yaml` usa `APP_AMBIENTE=homologacao` e deploy automático desativado.
-O Blueprint aponta para `main`. Para habilitar acesso administrativo após configurar
-os segredos e o Firebase, seguir [login administrativo](login-administrativo.md)
-e ativar `APP_AMBIENTE=producao` manualmente. Nunca ativar `publico` com dados reais.
-Importar um Blueprint pode iniciar sua primeira implantação mesmo com
-`autoDeployTrigger: off`: **não importar este arquivo nesta etapa**.
+O `render.yaml` está preparado para `APP_AMBIENTE=publico_compartilhado`, usando um
+projeto Firestore dedicado e registros compartilhados sem login. O deploy automático
+continua desativado, mas importar ou sincronizar um Blueprint pode iniciar um
+deploy. Configure antes os segredos e índices descritos em
+[operação pública compartilhada](publico-compartilhado.md). Não use o antigo modo `publico`
+com dados reais. `homologacao` continua disponível para validar somente a saúde
+da infraestrutura, e `producao` permanece autenticado.
 
 ## Python e dependências
 
@@ -85,22 +81,22 @@ não exige a pasta Frontend. O runtime usa `SERVIR_FRONTEND=false`.
 | `PYTHON_VERSION` | `3.14.6` |
 | `PYTHONDONTWRITEBYTECODE` / `PYTHONUNBUFFERED` | `1` / `1` |
 | `PORT` | Fornecida pela Render |
-| `APP_AMBIENTE` | `homologacao` no Blueprint; `local` continua sendo o padrão do código sem variável |
+| `APP_AMBIENTE` | `publico_compartilhado` no Blueprint; `local` continua sendo o padrão do código sem variável |
 | `SERVIR_FRONTEND` | `false` |
-| `ALLOWED_HOSTS` | Único campo manual do Blueprint: hosts públicos exatos da API, separados por vírgula, sem esquema, porta, caminho ou curinga |
+| `ALLOWED_HOSTS` / `CORS_ORIGINS` | Host exato da API / origem HTTPS exata da Vercel, preenchidos manualmente |
+| `FIRESTORE_MODO` | `real`, somente no projeto público dedicado |
+| `FIREBASE_PROJECT_ID` / `FIREBASE_PRODUCTION_PROJECT_ID` | IDs distintos, preenchidos manualmente |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `/etc/secrets/firestore-publico.json`; o arquivo secreto deve ser enviado somente à Render |
+| `INTEGRIDADE_CHAVE` | Chave privada e persistente, preenchida manualmente; `PUBLIC_SESSION_KEY` não é usada |
+| `LOTE_*` | 8 MiB compactados, 20 páginas/imagens, 50 MiB descompactados e 10 páginas por PDF |
 
-`ALLOWED_HOSTS` está com `sync: false`; confirmar o subdomínio efetivamente
-atribuído pela Render antes da inicialização. Exemplo fictício:
-`api-homologacao.onrender.com`. Não inferir esse valor somente pelo nome do serviço.
+Os campos manuais usam `sync: false`; confirmar o subdomínio efetivamente
+atribuído pela Render antes da inicialização.
 Se houver domínio personalizado verificado, incluir também o domínio que a Render
 usa no Host do health check. Lista ausente ou inválida impede a inicialização.
 
-Não fornecer credenciais Firebase nesta homologação. O Blueprint não solicita
-`FIRESTORE_MODO`, `FIREBASE_PROJECT_ID`, `ADMIN_UIDS`, `CORS_ORIGINS`,
-`GOOGLE_APPLICATION_CREDENTIALS` ou `INTEGRIDADE_CHAVE`. Essas configurações continuam
-obrigatórias para produção conforme [Firebase produção](firebase-producao.md),
-mas não devem ser acrescentadas para fazer a homologação responder.
-Não habilitar proxy headers nem `FORWARDED_ALLOW_IPS=*`.
+Não fornecer `ADMIN_UIDS` neste modo. Não habilitar proxy headers nem
+`FORWARDED_ALLOW_IPS=*`. O arquivo de credenciais não pertence ao Git ou à Vercel.
 
 ## Modos de execução
 
@@ -117,6 +113,10 @@ Não habilitar proxy headers nem `FORWARDED_ALLOW_IPS=*`.
   `SERVIR_FRONTEND` deve permanecer `false` (também seu padrão neste modo).
 - **producao:** mantém validação completa de configuração, autenticação e
   autorização existentes. Sua ativação não faz parte desta etapa.
+- **publico_sessoes:** acesso sem login com token anônimo assinado, Firestore
+  dedicado e separação por sessão. Veja [acesso público por sessões](publico-sessoes.md).
+- **publico_compartilhado:** acesso sem login aos mesmos registros Firestore de
+  todos os visitantes. Veja [operação pública compartilhada](publico-compartilhado.md).
 - **publico:** exige configuração explícita de Firestore real, chave de integridade,
   Host e origem HTTPS autorizados. Não exige Firebase Authentication nem `ADMIN_UIDS`.
   Qualquer cliente que alcance a API pode ler e alterar dados; veja
@@ -128,10 +128,9 @@ o health check é público e não revela dados, credenciais ou configuração in
 O esquema HTTP interno da Render não impede o GET: TLS termina na borda e o
 Uvicorn continua com `--no-proxy-headers`. CORS não é necessário ao health check.
 
-Para uma implantação futura autorizada, manter os comandos acima, definir somente
-o Host real, confirmar 200 com `{"status":"ok"}` e verificar 403 nas demais rotas.
-Não alterar o modo para produção apenas para liberar funcionalidades: isso requer
-uma etapa separada de configuração e autorização.
+Antes do deploy funcional, confirmar o projeto dedicado, os segredos, os índices
+e o backup/exportação. O health check responde sem conexão Firestore, portanto
+seu 200 não aprova persistência, IAM ou o fluxo de correção.
 
 ## Saúde e prontidão
 
@@ -151,15 +150,15 @@ check; evitar transformar indisponibilidade externa em reinicializações contí
 
 ## Temporários, memória e CPU
 
-As três rotas que gravam arquivos usam `TemporaryDirectory` com contexto: correção,
-reconhecimento de gabarito e OCR do nome. Novos testes verificam remoção após
-sucesso e exceções. Arquivos enviados não são persistidos no Firestore. Não é
-necessário disco persistente para esse fluxo. Encerramento forçado/SIGKILL pode
-impedir a limpeza Python; o filesystem temporário deve permanecer efêmero.
+Correção, reconhecimento de gabarito e OCR do nome usam `TemporaryDirectory`
+com contexto. ZIPs ficam temporariamente no processo por até duas horas e
+desaparecem em reinício; resultados confirmados ficam no Firestore dedicado.
+Arquivos enviados não são persistidos no banco. Encerramento forçado/SIGKILL
+pode impedir a limpeza Python; o filesystem temporário deve permanecer efêmero.
 
 Limites mantidos: arquivo 10 MiB, envelope multipart 11 MiB, JSON 128 KiB,
-12 milhões de pixels, dimensão máxima 6000, duas operações de processamento e
-quatro recepções por processo. Uma imagem BGR de 12 MP ocupa cerca de 34,3 MiB;
+12 milhões de pixels, dimensão máxima 6000, uma operação pesada no modo público
+e quatro recepções por processo. Uma imagem BGR de 12 MP ocupa cerca de 34,3 MiB;
 cópias, máscaras, PDF, base64 e tensores OCR aumentam esse consumo.
 
 Medição indicativa no Windows/Python 3.14.6, processo isolado:
@@ -182,11 +181,12 @@ medição, sem elevar os limites de segurança automaticamente.
 - Dry-run Linux: resolução concluída, nenhuma instalação.
 - Smoke test local de runtime: PNG, PDF e OCR concluídos.
 - Testes de configuração e limpeza de temporários incluídos na suíte Python.
-- Playwright foi instalado somente em `Frontend/tests` na Etapa 16; os 12 cenários
-  de navegador usam autenticação/API simuladas, sem Firebase real.
+- Playwright está somente em `Frontend/tests`; os cenários de navegador usam
+  API/Firebase simulados, sem conexão real ao projeto público.
 - Testes de homologação cobrem Host, proxy manipulado, métodos, documentação,
   rotas administrativas e rejeição mesmo com autorizador simulado válido.
-- Falta executar build/smoke tests em Linux real e homologar Firebase/Render.
+- Falta executar build/smoke tests em Linux real e o piloto fictício no projeto
+  Firestore público dedicado.
 - O formato YAML é verificado localmente; não houve validação autenticada na API Render.
 
 Fontes: [Python na Render](https://render.com/docs/python-version),

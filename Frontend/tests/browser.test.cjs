@@ -32,13 +32,144 @@ test("dashboard abre diretamente sem login e preserva navega??o", async () => {
   } finally { await browser.close(); }
 });
 
+test("demonstração pública abre sem login, mostra aviso e não oferece salvamento", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route("**/interface/js/config.mjs", route => route.fulfill({
+      contentType: "text/javascript",
+      body: `export const API_BASE_URL="https://corretor-gabaritos-8yal.onrender.com";
+        export const PUBLIC_DEMO=true; export const PUBLIC_OPEN=false; export const AUTH_REQUIRED=false;
+        export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN="";
+        export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";`,
+    }));
+    const paths = [];
+    await page.route("https://corretor-gabaritos-8yal.onrender.com/api/**", route => {
+      const request = route.request();
+      const endpoint = new URL(request.url()).pathname;
+      paths.push(endpoint);
+      assert.equal(request.headers().authorization, undefined);
+      const headers = { "Access-Control-Allow-Origin": baseURL };
+      const json = endpoint === "/api/avaliacoes"
+        ? [{ id: "demonstracao-50", titulo: "Avaliação fictícia", criada_em: "2026-11-01T00:00:00Z" }]
+        : endpoint === "/api/alunos/correspondencias"
+          ? { exato: null, exatos: [], semelhantes: [] }
+          : endpoint === "/api/alunos" ? { alunos: [], proximo_cursor: null } : {};
+      return route.fulfill({ json, headers });
+    });
+    await page.goto(baseURL + "/interface/");
+    await page.locator("#demo-banner").waitFor({ state: "visible" });
+    await page.locator("#capture-workspace").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#login-panel").isHidden(), true);
+    await page.locator('[data-tab="correcao"]').click();
+    assert.equal(await page.locator("#save-result").isHidden(), true);
+    assert.equal(await page.locator("#batch-panel").isHidden(), true);
+    assert.equal(await page.locator("#export-panel").isHidden(), true);
+    await page.locator('[data-tab="alunos"]').click();
+    assert.equal(await page.locator("#students-panel").isVisible(), true);
+    assert.ok(paths.includes("/api/avaliacoes"));
+    assert.ok(paths.includes("/api/alunos"));
+    assert.ok(!paths.includes("/api/auth/me"));
+  } finally { await browser.close(); }
+});
+
+test("sessão pública anônima abre sem login e é reutilizada após atualização", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route("**/interface/js/config.mjs", route => route.fulfill({
+      contentType: "text/javascript",
+      body: `export const API_BASE_URL="https://corretor-gabaritos-8yal.onrender.com";
+        export const PUBLIC_DEMO=false; export const PUBLIC_OPEN=true; export const AUTH_REQUIRED=false;
+        export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN="";
+        export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";`,
+    }));
+    const token = `${"a".repeat(32)}.1790000000.${"b".repeat(43)}`;
+    let issued = 0, validated = 0, business = 0;
+    await page.route("https://corretor-gabaritos-8yal.onrender.com/api/**", route => {
+      const request = route.request(), endpoint = new URL(request.url()).pathname;
+      const headers = { "Access-Control-Allow-Origin": baseURL,
+        "Access-Control-Allow-Headers": "authorization,content-type",
+        "Access-Control-Allow-Methods": "GET,POST,DELETE" };
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 200, headers });
+      if (endpoint === "/api/public/session" && request.method() === "POST") {
+        issued++;
+        assert.equal(request.headers().authorization, undefined);
+        return route.fulfill({ headers, json: { token, expires_in: 2592000 } });
+      }
+      assert.equal(request.headers().authorization, `Bearer ${token}`);
+      if (endpoint === "/api/public/session") {
+        validated++;
+        return route.fulfill({ headers, json: { status: "ok" } });
+      }
+      business++;
+      const json = endpoint === "/api/avaliacoes" ? []
+        : endpoint === "/api/alunos/correspondencias"
+          ? { exato: null, exatos: [], semelhantes: [] }
+          : endpoint === "/api/alunos" ? { alunos: [], proximo_cursor: null } : {};
+      return route.fulfill({ headers, json });
+    });
+    await page.goto(baseURL + "/interface/");
+    await page.locator("#public-banner").waitFor({ state: "visible" });
+    await page.locator("#evaluation-list").getByText("Nenhuma avaliação cadastrada").waitFor();
+    assert.equal(await page.locator("#login-panel").isHidden(), true);
+    assert.equal(issued, 1);
+    await page.reload();
+    await page.locator("#public-banner").waitFor({ state: "visible" });
+    await page.locator("#evaluation-list").getByText("Nenhuma avaliação cadastrada").waitFor();
+    assert.equal(issued, 1);
+    assert.equal(validated, 1);
+    assert.ok(business >= 2);
+  } finally { await browser.close(); }
+});
+
+test("site público compartilhado abre em dois navegadores sem criar sessão ou usar Firebase", async () => {
+  const browser = await chromium.launch();
+  try {
+    const seen = [];
+    for (const page of [await browser.newPage(), await browser.newPage()]) {
+      await page.route("**/interface/js/config.mjs", route => route.fulfill({
+        contentType: "text/javascript",
+        body: `export const API_BASE_URL="https://corretor-gabaritos-8yal.onrender.com";
+          export const PUBLIC_DEMO=false; export const PUBLIC_OPEN=false;
+          export const PUBLIC_SHARED=true; export const AUTH_REQUIRED=false;
+          export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN="";
+          export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";`,
+      }));
+      await page.route("https://corretor-gabaritos-8yal.onrender.com/api/**", route => {
+        const endpoint = new URL(route.request().url()).pathname;
+        seen.push(endpoint);
+        assert.equal(route.request().headers().authorization, undefined);
+        assert.notEqual(endpoint, "/api/public/session");
+        const headers = { "Access-Control-Allow-Origin": baseURL,
+          "Access-Control-Allow-Headers": "content-type,x-lote-token",
+          "Access-Control-Allow-Methods": "GET,POST,DELETE" };
+        if (route.request().method() === "OPTIONS") return route.fulfill({ status: 200, headers });
+        const json = endpoint === "/api/avaliacoes"
+          ? [{ id: "prova-ficticia", titulo: "Avaliação compartilhada", criada_em: "2026-11-13T00:00:00Z" }]
+          : endpoint === "/api/alunos/correspondencias"
+            ? { exato: null, exatos: [], semelhantes: [] }
+            : endpoint === "/api/alunos" ? [] : {};
+        return route.fulfill({ json, headers });
+      });
+      await page.goto(baseURL + "/interface/");
+      await page.locator("#public-banner").waitFor({ state: "visible" });
+      await page.locator("#evaluation-list").getByText("Avaliação compartilhada").waitFor();
+      assert.equal(await page.locator("#login-panel").isHidden(), true);
+      await page.locator('[data-tab="correcao"]').click();
+      assert.equal(await page.locator("#correction-fields").isVisible(), true);
+    }
+    assert.equal(seen.filter(path => path === "/api/avaliacoes").length, 2);
+  } finally { await browser.close(); }
+});
+
 test("Vercel simulada exige login, restaura sessão autorizada e faz logout", async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await page.route("**/interface/js/config.mjs", route => route.fulfill({
       contentType: "text/javascript", body: `export const API_BASE_URL="https://corretor-gabaritos-8yal.onrender.com";
-        export const AUTH_REQUIRED=true; export const FIREBASE_API_KEY="chave-publica-ficticia";
+        export const PUBLIC_DEMO=false; export const PUBLIC_OPEN=false; export const AUTH_REQUIRED=true; export const FIREBASE_API_KEY="chave-publica-ficticia";
         export const FIREBASE_AUTH_DOMAIN="projeto-ficticio.firebaseapp.com";
         export const FIREBASE_PROJECT_ID="projeto-ficticio"; export const FIREBASE_APP_ID="app-ficticio";`,
     }));

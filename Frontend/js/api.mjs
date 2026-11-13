@@ -1,5 +1,6 @@
-import { API_BASE_URL, AUTH_REQUIRED } from "./config.mjs";
+import { API_BASE_URL, AUTH_REQUIRED, PUBLIC_OPEN } from "./config.mjs";
 import { authSession } from "./auth.mjs";
+import { getPublicSessionToken } from "./public-session.mjs";
 
 let gateEnabled = false, gateOpen = false, gateEpoch = 0;
 
@@ -59,6 +60,7 @@ export async function request(url, options = {}) {
     }
     headers.set("Authorization", `Bearer ${token}`);
   }
+  if (PUBLIC_OPEN) headers.set("Authorization", `Bearer ${getPublicSessionToken()}`);
   const checkCurrent = () => {
     checkAccess(url, epoch);
     if (AUTH_REQUIRED && generation !== authSession.getGeneration())
@@ -97,11 +99,12 @@ export async function request(url, options = {}) {
   return data;
 }
 
-export async function requestBinary(url) {
+export async function requestBinary(url, options = {}) {
   const target = apiUrl(url);
   const epoch = gateEpoch;
   checkAccess(url, epoch);
-  const headers = new Headers();
+  const headers = new Headers(options.headers);
+  headers.delete("Authorization");
   let generation;
   if (AUTH_REQUIRED) {
     const token = await authSession.getToken();
@@ -110,6 +113,7 @@ export async function requestBinary(url) {
     if (!token) throw new Error("Sessão ausente ou expirada. Entre novamente.");
     headers.set("Authorization", `Bearer ${token}`);
   }
+  if (PUBLIC_OPEN) headers.set("Authorization", `Bearer ${getPublicSessionToken()}`);
   const response = await fetch(target, { headers, cache: "no-store", redirect: "error" });
   checkAccess(url, epoch);
   if (AUTH_REQUIRED && generation !== authSession.getGeneration())

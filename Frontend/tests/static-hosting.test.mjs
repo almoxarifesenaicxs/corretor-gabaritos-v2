@@ -128,11 +128,13 @@ test("Vercel usa saída estática, preserva câmera e não encaminha API", async
   assert.equal(config.rewrites, undefined);
   const headers = Object.fromEntries(config.headers[0].headers.map(item => [item.key, item.value]));
   assert.equal(headers["Permissions-Policy"], "camera=(self), microphone=()");
+  assert.match(headers["Content-Security-Policy"], /script-src 'self'/);
+  assert.match(headers["Content-Security-Policy"], /connect-src 'self' https:\/\/corretor-gabaritos-8yal\.onrender\.com/);
   assert.match(headers["Cache-Control"], /must-revalidate/);
   const ignores = await read(".vercelignore");
   for (const name of ["tests/", ".env", ".secrets/", "js/script.js"]) assert.ok(ignores.split(/\r?\n/).includes(name));
   const publicConfig = await read("js/config.mjs");
   assert.deepEqual([...publicConfig.matchAll(/export const (\w+)/g)].map(([, name]) => name),
-    ["API_BASE_URL", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_PROJECT_ID", "FIREBASE_APP_ID", "AUTH_REQUIRED"]);
+    ["API_BASE_URL", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_PROJECT_ID", "FIREBASE_APP_ID", "PUBLIC_DEMO", "PUBLIC_OPEN", "PUBLIC_SHARED", "AUTH_REQUIRED"]);
   assert.doesNotMatch(publicConfig, /BEGIN PRIVATE KEY|private_key\s*[:=]|refreshToken\s*[:=]/);
 });

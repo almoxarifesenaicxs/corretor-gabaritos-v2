@@ -1,7 +1,8 @@
 """Barreiras locais e orçamento de recepção antes do parser de formulários."""
 
 from ipaddress import ip_address
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
+from collections import deque
 from urllib.parse import urlsplit
 import asyncio
 import time
@@ -12,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from app.autenticacao import autorizar_credencial
 from app.ambiente import Ambiente
+from app.sessoes_publicas import identificar_token
 
 LIMITE_CORPO_UPLOAD = 11 * 1024 * 1024
 LIMITE_CORPO_LOTE = 33 * 1024 * 1024
@@ -19,6 +21,19 @@ LIMITE_CORPO_JSON = 128 * 1024
 PRAZO_CORPO = 30
 _PROCESSAMENTOS = BoundedSemaphore(2)
 _RECEPCOES = BoundedSemaphore(4)
+_DEMO_PROCESSAMENTOS = BoundedSemaphore(1)
+_DEMO_JANELA = deque()
+_DEMO_LOCK = Lock()
+_PUBLIC_LOCK = Lock()
+_PUBLIC_JANELAS = {}
+_DEMO_ROTAS = {
+    ("GET", "/api/health"), ("GET", "/api/demo/info"),
+    ("GET", "/api/avaliacoes"), ("GET", "/api/avaliacoes/demonstracao-50/gabarito"),
+    ("GET", "/api/alunos"), ("GET", "/api/alunos/correspondencias"),
+    ("POST", "/api/correcoes/processar"), ("POST", "/api/correcoes/recalcular"),
+    ("POST", "/api/alunos/reconhecer-nome"),
+}
+_DEMO_CUSTOSAS = {"/api/correcoes/processar", "/api/alunos/reconhecer-nome"}
 ROTAS_PROCESSAMENTO = {
     "/api/correcoes/processar", "/api/gabaritos/reconhecer",
     "/api/capturas/analisar", "/api/alunos/reconhecer-nome", "/api/correcoes/recalcular",
@@ -35,11 +50,17 @@ class ProtecaoLocal:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         if (scope["path"].startswith("/api/lotes")
-                and self.ambiente.modo not in {"local_operacional", "producao", "homologacao"}):
+                and self.ambiente.modo not in {"local_operacional", "producao", "homologacao", "publico_sessoes", "publico_compartilhado"}):
             return await JSONResponse({"detail": "Lotes disponíveis somente no modo operacional local."}, 404)(scope, receive, send)
         headers = dict(scope["headers"])
         if self.ambiente.modo == "homologacao":
             return await self.homologacao(scope, receive, send, headers)
+        if self.ambiente.modo == "publico_demo":
+            return await self.publico_demo(scope, receive, send, headers)
+        if self.ambiente.modo == "publico_sessoes":
+            return await self.publico_sessoes(scope, receive, send, headers)
+        if self.ambiente.modo == "publico_compartilhado":
+            return await self.publico_sessoes(scope, receive, send, headers, compartilhado=True)
         if self.ambiente.modo == "local_operacional":
             return await self.local_operacional(scope, receive, send, headers)
         if self.ambiente.modo in {"producao", "publico"}:
@@ -101,6 +122,135 @@ class ProtecaoLocal:
         scope["headers"] = [(k, v) for k, v in scope["headers"]
                             if k != b"forwarded" and not k.startswith(b"x-forwarded-")]
         return await self.app(scope, receive, send)
+
+    async def publico_demo(self, scope, receive, send, headers):
+        if sum(k == b"host" for k, _ in scope["headers"]) != 1 or sum(k == b"origin" for k, _ in scope["headers"]) > 1:
+            return await JSONResponse({"detail": "Cabeçalhos ambíguos."}, 400)(scope, receive, send)
+        try:
+            host = headers.get(b"host", b"").decode("ascii").lower()
+            origin = headers.get(b"origin")
+            autorizado = host in self.ambiente.hosts and (
+                origin is None or origin.decode("ascii") in self.ambiente.origens)
+        except UnicodeError:
+            autorizado = False
+        if not autorizado:
+            return await JSONResponse({"detail": "Host ou origem não autorizado."}, 403)(scope, receive, send)
+        requested = headers.get(b"access-control-request-method", b"").decode("ascii", "ignore").upper()
+        method = requested if scope["method"] == "OPTIONS" else scope["method"]
+        if (method, scope["path"]) not in _DEMO_ROTAS:
+            return await JSONResponse({"detail": "Rota indisponível na demonstração."}, 404)(scope, receive, send)
+        enviar_original = send
+
+        async def enviar(evento):
+            if evento["type"] == "http.response.start":
+                cabecalhos = list(evento.get("headers", []))
+                cabecalhos.append((b"cache-control", b"no-store"))
+                if origin is not None and not any(k == b"access-control-allow-origin" for k, _ in cabecalhos):
+                    cabecalhos.extend([(b"access-control-allow-origin", origin), (b"vary", b"Origin")])
+                evento = {**evento, "headers": cabecalhos}
+            await enviar_original(evento)
+
+        if scope["method"] == "OPTIONS" or scope["path"] not in _DEMO_CUSTOSAS:
+            return await self.receber_corpo(scope, receive, enviar, headers)
+        now = time.monotonic()
+        with _DEMO_LOCK:
+            while _DEMO_JANELA and now - _DEMO_JANELA[0] > 60:
+                _DEMO_JANELA.popleft()
+            excedido = len(_DEMO_JANELA) >= 12
+            if not excedido:
+                _DEMO_JANELA.append(now)
+        if excedido:
+            return await JSONResponse({"detail": "Limite temporário de processamento atingido."}, 429)(scope, receive, enviar)
+        if not _DEMO_PROCESSAMENTOS.acquire(blocking=False):
+            return await JSONResponse({"detail": "Processamento ocupado. Tente novamente."}, 503)(scope, receive, enviar)
+        try:
+            return await self.receber_corpo(scope, receive, enviar, headers)
+        finally:
+            _DEMO_PROCESSAMENTOS.release()
+
+    async def publico_sessoes(self, scope, receive, send, headers, compartilhado=False):
+        for nome in (b"host", b"origin", b"authorization", b"content-length"):
+            if sum(chave == nome for chave, _ in scope["headers"]) > 1:
+                return await JSONResponse({"detail": "Cabeçalhos ambíguos."}, 400)(scope, receive, send)
+        try:
+            host = headers.get(b"host", b"").decode("ascii").lower()
+            origem = headers.get(b"origin")
+            permitido = host in self.ambiente.hosts and (
+                origem is None or origem.decode("ascii") in self.ambiente.origens)
+        except UnicodeError:
+            permitido = False
+        if not permitido:
+            return await JSONResponse({"detail": "Host ou origem não autorizado."}, 403)(scope, receive, send)
+        caminho = scope["path"]
+        metodo = scope["method"]
+        enviar_original = send
+
+        async def enviar(evento):
+            if evento["type"] == "http.response.start":
+                cabecalhos = list(evento.get("headers", []))
+                cabecalhos.append((b"cache-control", b"no-store"))
+                if origem is not None and not any(k == b"access-control-allow-origin" for k, _ in cabecalhos):
+                    cabecalhos.extend([(b"access-control-allow-origin", origem), (b"vary", b"Origin")])
+                evento = {**evento, "headers": cabecalhos}
+            await enviar_original(evento)
+
+        if metodo == "OPTIONS":
+            return await self.app(scope, receive, enviar)
+        if caminho == "/api/health" and metodo == "GET":
+            return await self.app(scope, receive, enviar)
+        nova = not compartilhado and caminho == "/api/public/session" and metodo == "POST"
+        sessao = None
+        if not nova and not compartilhado:
+            try:
+                valor = headers.get(b"authorization", b"").decode("ascii")
+                partes = valor.split()
+                sessao = identificar_token(self.ambiente.chave_sessao, partes[1]) if (
+                    len(partes) == 2 and partes[0].lower() == "bearer") else None
+            except UnicodeError:
+                sessao = None
+            if not sessao:
+                return await JSONResponse({"detail": "Sessão anônima ausente ou expirada."}, 401)(scope, receive, enviar)
+            scope = {**scope, "state": {**scope.get("state", {}), "public_session": sessao}}
+        agora = time.monotonic()
+        chave = "novas" if nova else "publico_compartilhado" if compartilhado else f"sessao:{sessao}"
+        limite = 8 if nova else 120
+        custosa = caminho in ROTAS_PROCESSAMENTO or caminho.startswith("/api/lotes/")
+        escrita = metodo == "POST" and caminho in {"/api/avaliacoes", "/api/correcoes/salvar"}
+        exportacao = metodo == "GET" and caminho == "/api/correcoes/exportar"
+        with _PUBLIC_LOCK:
+            for identificador, janela in list(_PUBLIC_JANELAS.items()):
+                while janela and agora - janela[0] > 60:
+                    janela.popleft()
+                if not janela:
+                    del _PUBLIC_JANELAS[identificador]
+            janela = _PUBLIC_JANELAS.setdefault(chave, deque())
+            excedido = len(janela) >= limite
+            if not excedido:
+                janela.append(agora)
+            if custosa and not excedido:
+                global_janela = _PUBLIC_JANELAS.setdefault("processamentos", deque())
+                excedido = len(global_janela) >= 18
+                if not excedido:
+                    global_janela.append(agora)
+            if escrita and not excedido:
+                global_janela = _PUBLIC_JANELAS.setdefault("escritas", deque())
+                excedido = len(global_janela) >= 6
+                if not excedido:
+                    global_janela.append(agora)
+            if exportacao and not excedido:
+                global_janela = _PUBLIC_JANELAS.setdefault("exportacoes", deque())
+                excedido = len(global_janela) >= 2
+                if not excedido:
+                    global_janela.append(agora)
+        if excedido:
+            return await JSONResponse({"detail": "Limite temporário de requisições atingido."}, 429)(scope, receive, enviar)
+        if custosa and not _DEMO_PROCESSAMENTOS.acquire(blocking=False):
+            return await JSONResponse({"detail": "Processamento ocupado. Tente novamente."}, 503)(scope, receive, enviar)
+        try:
+            return await self.receber_corpo(scope, receive, enviar, headers)
+        finally:
+            if custosa:
+                _DEMO_PROCESSAMENTOS.release()
 
     async def producao(self, scope, receive, send, headers):
         # Host/Origin/Authorization ambíguos são rejeitados, nunca escolher um dos valores.
@@ -168,7 +318,8 @@ class ProtecaoLocal:
 
     async def com_corpo(self, scope, receive, send, headers):
         multipart = headers.get(b"content-type", b"").lower().startswith(b"multipart/form-data")
-        limite = (LIMITE_CORPO_LOTE if scope["path"] == "/api/lotes/zip" and self.ambiente.modo in {"local_operacional", "producao"}
+        limite = (9 * 1024 * 1024 if scope["path"] == "/api/lotes/zip" and self.ambiente.modo in {"publico_sessoes", "publico_compartilhado"}
+                  else LIMITE_CORPO_LOTE if scope["path"] == "/api/lotes/zip" and self.ambiente.modo in {"local_operacional", "producao"}
                   else LIMITE_CORPO_UPLOAD if multipart else LIMITE_CORPO_JSON)
         try:
             declarado = int(headers.get(b"content-length", b"0"))

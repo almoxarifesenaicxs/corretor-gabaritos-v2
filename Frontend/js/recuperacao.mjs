@@ -1,13 +1,17 @@
-import { API_BASE_URL, AUTH_REQUIRED } from "./config.mjs";
+import * as runtimeConfig from "./config.mjs";
+const { API_BASE_URL, AUTH_REQUIRED, PUBLIC_OPEN } = runtimeConfig;
+const PUBLIC_SHARED = runtimeConfig.PUBLIC_SHARED === true;
+import { getPublicSessionId } from "./public-session.mjs";
 
 const KEY = "corretor:correcoes-pendentes:v1";
+const storageKey = () => PUBLIC_OPEN ? `${KEY}:${getPublicSessionId()}` : KEY;
 const MAX = 20;
 const FIELDS = ["prova_id", "aluno", "aluno_id", "novo_homonimo", "resultado",
   "respostas", "comprovante", "confirmado", "permitir_provisorio", "origem_lote"];
 
 export function recoveryAvailable(base = API_BASE_URL, location = globalThis.location) {
   return (base === "" && ["127.0.0.1", "localhost", "[::1]"].includes(location?.hostname)) ||
-    (AUTH_REQUIRED && location?.protocol === "https:" && base.startsWith("https://"));
+    ((AUTH_REQUIRED || PUBLIC_OPEN || PUBLIC_SHARED) && location?.protocol === "https:" && base.startsWith("https://"));
 }
 
 export function createRecovery({ storage = globalThis.localStorage,
@@ -17,7 +21,7 @@ export function createRecovery({ storage = globalThis.localStorage,
   function read() {
     if (!enabled) return [];
     let entries;
-    try { entries = JSON.parse(storage.getItem(KEY) || "[]"); }
+    try { entries = JSON.parse(storage.getItem(storageKey()) || "[]"); }
     catch { throw new Error("Registro local de recuperação ilegível. Não envie outra correção antes de conferir o histórico."); }
     if (!Array.isArray(entries) || entries.length > MAX || entries.some(entry =>
       !/^[0-9a-f-]{36}$/i.test(entry?.id) || !entry.payload ||
@@ -26,7 +30,7 @@ export function createRecovery({ storage = globalThis.localStorage,
     return entries;
   }
   function write(entries) {
-    try { storage.setItem(KEY, JSON.stringify(entries)); }
+    try { storage.setItem(storageKey(), JSON.stringify(entries)); }
     catch { throw new Error("Não foi possível preservar a correção neste navegador. O envio foi bloqueado."); }
   }
   return {

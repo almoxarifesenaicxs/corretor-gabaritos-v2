@@ -75,6 +75,8 @@ def test_dashboard_e_rotas_sem_login_com_api_local(servidor):
     config = http.get("/interface/js/config.mjs")
     assert config.status_code == 200
     assert 'export const API_BASE_URL = "";' in config.text
+    assert 'export const PUBLIC_DEMO = false;' in config.text
+    assert 'export const PUBLIC_OPEN = false;' in config.text
     assert 'export const AUTH_REQUIRED = false;' in config.text
     assert config.headers["cache-control"] == "no-store"
     assert http.get("/api/health").json() == {"status": "ok"}

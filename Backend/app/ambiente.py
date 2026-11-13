@@ -12,12 +12,13 @@ class Ambiente:
     hosts: tuple[str, ...] = ()
     origens: tuple[str, ...] = ()
     chave_integridade: bytes | None = None
+    chave_sessao: bytes | None = None
 
 
 def carregar_ambiente(origens):
     modo = os.environ.get("APP_AMBIENTE", "local").strip().lower()
-    if modo not in {"local", "local_publico", "local_operacional", "homologacao", "producao", "publico"}:
-        raise ValueError("APP_AMBIENTE deve ser local, local_publico, local_operacional, homologacao, producao ou publico.")
+    if modo not in {"local", "local_publico", "local_operacional", "homologacao", "producao", "publico", "publico_demo", "publico_sessoes", "publico_compartilhado"}:
+        raise ValueError("APP_AMBIENTE inválido.")
     if modo == "local_publico" and os.environ.get("FIRESTORE_MODO", "emulador").strip().lower() != "emulador":
         raise ValueError("local_publico exige FIRESTORE_MODO=emulador.")
     if modo in {"local", "local_publico"}:
@@ -70,6 +71,63 @@ def carregar_ambiente(origens):
             raise ValueError("Confiança irrestrita em proxies não é permitida.")
         # Não carregar credenciais ou serviços Firebase neste modo.
         return Ambiente(modo, hosts)
+
+    if modo == "publico_demo":
+        # Falha fechada mesmo que segredos de outra implantação permaneçam no ambiente.
+        if any(os.environ.get(nome) for nome in (
+                "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT",
+                "FIREBASE_PROJECT_ID", "FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST",
+                "ADMIN_UIDS", "INTEGRIDADE_CHAVE", "FIRESTORE_MODO")):
+            raise ValueError("publico_demo não aceita credenciais nem configuração Firebase/Firestore.")
+        if os.environ.get("SERVIR_FRONTEND", "false").strip().lower() != "false":
+            raise ValueError("publico_demo exige frontend separado.")
+        if os.environ.get("FORWARDED_ALLOW_IPS", "").strip() == "*":
+            raise ValueError("Confiança irrestrita em proxies não é permitida.")
+        hosts = tuple(host.strip().lower() for host in os.environ.get("ALLOWED_HOSTS", "").split(",") if host.strip())
+        if not hosts or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host for host in hosts):
+            raise ValueError("publico_demo exige ALLOWED_HOSTS exatos.")
+        if not origens or any(urlsplit(origem).scheme != "https" for origem in origens):
+            raise ValueError("publico_demo exige CORS_ORIGINS HTTPS explícitas.")
+        return Ambiente(modo, hosts, tuple(origens))
+
+    if modo in {"publico_sessoes", "publico_compartilhado"}:
+        if os.environ.get("FIRESTORE_MODO") != "real" or any(os.environ.get(nome) for nome in (
+                "FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST", "ADMIN_UIDS")):
+            raise ValueError(f"{modo} exige Firestore real isolado, sem emuladores ou administradores.")
+        projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
+        projeto_real = os.environ.get("FIREBASE_PRODUCTION_PROJECT_ID", "")
+        if (not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", projeto)
+                or not projeto_real or projeto == projeto_real
+                or projeto == "corretor-gabaritos-v2" or projeto.startswith("demo-")):
+            raise ValueError(f"{modo} exige projeto Firebase exclusivo, distinto da produção.")
+        caminho = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if not caminho or not Path(caminho).is_file():
+            raise ValueError(f"{modo} exige credenciais privadas do projeto público no backend.")
+        from firebase_admin import credentials
+        try:
+            if credentials.Certificate(caminho).project_id != projeto:
+                raise ValueError("Projeto das credenciais diferente do projeto público.")
+        except Exception:
+            raise ValueError("Credenciais do projeto público inválidas.") from None
+        segredo = os.environ.get("INTEGRIDADE_CHAVE", "")
+        sessao = os.environ.get("PUBLIC_SESSION_KEY", "") if modo == "publico_sessoes" else ""
+        chaves = (("INTEGRIDADE_CHAVE", segredo), ("PUBLIC_SESSION_KEY", sessao)) if modo == "publico_sessoes" else (("INTEGRIDADE_CHAVE", segredo),)
+        for nome, valor in chaves:
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", valor) or len(set(valor.lower())) < 8:
+                raise ValueError(f"{modo} exige {nome} aleatória de 32 bytes.")
+        if sessao and segredo.lower() == sessao.lower():
+            raise ValueError("Chaves de integridade e sessão devem ser distintas.")
+        if os.environ.get("SERVIR_FRONTEND", "false").strip().lower() != "false":
+            raise ValueError(f"{modo} exige frontend separado.")
+        if os.environ.get("FORWARDED_ALLOW_IPS", "").strip() == "*":
+            raise ValueError("Confiança irrestrita em proxies não é permitida.")
+        if not origens or any(urlsplit(origem).scheme != "https" for origem in origens):
+            raise ValueError(f"{modo} exige CORS_ORIGINS HTTPS explícitas.")
+        hosts = tuple(host.strip().lower() for host in os.environ.get("ALLOWED_HOSTS", "").split(","))
+        if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host for host in hosts):
+            raise ValueError(f"{modo} exige ALLOWED_HOSTS exatos.")
+        return Ambiente(modo, hosts, tuple(origens), bytes.fromhex(segredo),
+                        bytes.fromhex(sessao) if sessao else None)
 
     projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
     if not projeto or projeto != projeto.strip() or projeto.startswith("demo-"):

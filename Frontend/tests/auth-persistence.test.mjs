@@ -98,7 +98,8 @@ test("credenciais incorretas, serviço indisponível e configuração ausente s�
   assert.equal(await auth.restore(), null);
   mock.state.signInError = { code: "auth/invalid-credential" };
   await assert.rejects(() => auth.login("a", "b"), error => error.reason === "credentials");
-  await assert.rejects(() => createAuth({ sdkLoader: mock.sdkLoader }).restore(),
+  await assert.rejects(() => createAuth({ apiKey: "", authDomain: "", projectId: "", appId: "",
+    sdkLoader: mock.sdkLoader }).restore(),
     error => error instanceof AuthSessionError && error.reason === "configuration");
 });
 

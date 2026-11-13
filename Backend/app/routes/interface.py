@@ -22,12 +22,13 @@ from app.services.correcao import corrigir_respostas
 from app.services.correcao_visual import classificar_questoes
 from app.services.integridade import assinar_respostas
 from app.services.exportacao import exportar_correcoes, LimiteExportacao, AvaliacaoInexistente
+from app.sessoes_publicas import FirestoreDaSessao
 
 router = APIRouter(prefix="/api", tags=["Interface"])
 
 
 def exigir_modo_operacional(request: Request):
-    if getattr(request.app.state, "ambiente", "local") not in {"local_operacional", "producao"}:
+    if getattr(request.app.state, "ambiente", "local") not in {"local_operacional", "producao", "publico_sessoes", "publico_compartilhado"}:
         raise HTTPException(404, "Rota indisponível neste modo.")
 
 
@@ -57,7 +58,7 @@ def obter_persistencia(request: Request):
     except ValueError:
         raise HTTPException(503, "Persistência indisponível. Confira FIRESTORE_MODO e a configuração do Firestore no backend.") from None
     modo = getattr(request.app.state, "ambiente", "local")
-    if modo in {"producao", "publico"}:
+    if modo in {"producao", "publico", "publico_compartilhado"}:
         if emulador:
             raise HTTPException(503, "Emulador indisponível em produção.")
         if modo == "producao" and not getattr(request.state, "administrador_verificado", None):
@@ -66,13 +67,17 @@ def obter_persistencia(request: Request):
         if emulador:
             raise HTTPException(503, "Emulador indisponível no modo operacional.")
         exigir_acesso_local(request)
+    elif modo == "publico_sessoes":
+        if emulador or not getattr(request.state, "public_session", None):
+            raise HTTPException(503, "Sessão pública ou persistência indisponível.")
     elif not emulador:
         exigir_acesso_local(request)
     iniciado = False
     try:
         with conectar_firestore(emulador=emulador) as cliente:
             iniciado = True
-            yield Persistencia(cliente)
+            yield Persistencia(FirestoreDaSessao(cliente, request.state.public_session)
+                               if modo == "publico_sessoes" else cliente)
     except HTTPException:
         raise
     except RegistroExistente:
@@ -191,7 +196,7 @@ def consultar_gabarito(prova_id: str, repo: Repo):
 def salvar_correcao(entrada: CorrecaoEntrada, repo: Repo, request: Request):
     if not entrada.confirmado:
         raise HTTPException(422, "Confira e confirme o resultado antes de salvar.")
-    if entrada.origem_lote is not None and request.app.state.ambiente not in {"local_operacional", "producao"}:
+    if entrada.origem_lote is not None and request.app.state.ambiente not in {"local_operacional", "producao", "publico_sessoes", "publico_compartilhado"}:
         raise HTTPException(422, "Origem de lote disponível somente no modo operacional local.")
     vinculo = {"aluno_id": entrada.aluno_id} if entrada.aluno_id is not None else {}
     try:

@@ -64,9 +64,9 @@ def test_producao_autorizada_e_cors(servidor):
 def test_lote_exportacao_e_recuperacao_exigem_admin_em_producao(servidor, monkeypatch):
     from app.routes import lotes
     api, http, verificar, repo = servidor
-    monkeypatch.setattr(lotes.lotes_zip, "manifesto", lambda lote_id: {
+    monkeypatch.setattr(lotes.lotes_zip, "manifesto", lambda lote_id, owner=None: {
         "lote_id": lote_id, "total": 1, "imagens": []})
-    monkeypatch.setattr(lotes.lotes_zip, "imagem", lambda lote_id, indice: (
+    monkeypatch.setattr(lotes.lotes_zip, "imagem", lambda lote_id, indice, owner=None: (
         b"imagem-ficticia", "foto.jpg", "image/jpeg"))
     monkeypatch.setattr(interface, "exportar_correcoes", lambda repo, prova_id: {
         "csv": "id\n", "resumo": {"total_correcoes": 0}})

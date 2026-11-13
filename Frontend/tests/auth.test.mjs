@@ -4,7 +4,8 @@ import { createAuth, authSession } from "../js/auth.mjs";
 import { request, requestBinary, upload, setApiAccess } from "../js/api.mjs";
 
 test("configuração ausente não carrega o Firebase", async () => {
-  const auth = createAuth({ sdkLoader: () => { throw new Error("Não deve carregar SDK"); } });
+  const auth = createAuth({ apiKey: "", authDomain: "", projectId: "", appId: "",
+    sdkLoader: () => { throw new Error("Não deve carregar SDK"); } });
   await assert.rejects(() => auth.login("a", "b"), /Configure/);
   assert.equal(await auth.getToken(), null);
 });

@@ -1,10 +1,12 @@
-"""Importação temporária de imagens ZIP, restrita ao modo operacional local."""
+"""Importação temporária de ZIP com acesso restrito aos arquivos do lote."""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, UploadFile, Request
 from fastapi.responses import Response
 from hashlib import sha256
+import re
+import secrets
 
 from app.routes.interface import exigir_acesso_local, exigir_modo_operacional
 from app.services.lotes_zip import lotes_zip
@@ -19,19 +21,29 @@ router = APIRouter(prefix="/api/lotes", tags=["Lotes"],
                    dependencies=[Depends(exigir_modo_operacional), Depends(exigir_acesso_lote)])
 
 
+def _owner(request: Request):
+    if request.app.state.ambiente == "publico_compartilhado":
+        token = request.headers.get("x-lote-token", "")
+        return token if re.fullmatch(r"[A-Za-z0-9_-]{43}", token) else None
+    return getattr(request.state, "public_session", None)
+
+
 @router.post("/zip")
-def importar_zip(arquivo: Annotated[UploadFile, File()]):
-    return lotes_zip.criar(arquivo)
+def importar_zip(arquivo: Annotated[UploadFile, File()], request: Request):
+    if request.app.state.ambiente == "publico_compartilhado":
+        token = secrets.token_urlsafe(32)
+        return {**lotes_zip.criar(arquivo, owner=token), "lote_token": token}
+    return lotes_zip.criar(arquivo, owner=_owner(request))
 
 
 @router.get("/{lote_id}")
-def consultar_lote(lote_id: str):
-    return lotes_zip.manifesto(lote_id)
+def consultar_lote(lote_id: str, request: Request):
+    return lotes_zip.manifesto(lote_id, owner=_owner(request))
 
 
 @router.get("/{lote_id}/imagens/{indice}")
-def obter_imagem(lote_id: str, indice: int):
-    conteudo, nome, tipo = lotes_zip.imagem(lote_id, indice)
+def obter_imagem(lote_id: str, indice: int, request: Request):
+    conteudo, nome, tipo = lotes_zip.imagem(lote_id, indice, owner=_owner(request))
     return Response(conteudo, media_type=tipo, headers={
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         "X-Image-SHA256": sha256(conteudo).hexdigest(),
@@ -40,5 +52,5 @@ def obter_imagem(lote_id: str, indice: int):
 
 
 @router.delete("/{lote_id}", status_code=204)
-def cancelar_lote(lote_id: str):
-    lotes_zip.cancelar(lote_id)
+def cancelar_lote(lote_id: str, request: Request):
+    lotes_zip.cancelar(lote_id, owner=_owner(request))

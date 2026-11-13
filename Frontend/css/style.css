@@ -1042,3 +1042,21 @@ footer {
     align-items: stretch;
   }
 }
+.demo-banner {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #75612e;
+  border-radius: 0.75rem;
+  background: #25251d;
+  color: #f4e6b1;
+}
+body.public-demo #evaluation-fields,
+body.public-demo #official-panel,
+body.public-demo #student-link-panel,
+body.public-demo #save-result,
+body.public-demo label:has(#confirm-result),
+body.public-demo #provisional-label,
+body.public-demo #export-panel,
+body.public-demo #batch-panel {
+  display: none !important;
+}

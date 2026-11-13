@@ -32,6 +32,15 @@ test("lote é sequencial, exige revisão e conta confirmações sem salvar autom
   assert.equal(lote.proxima(), null);
 });
 
+test("lote público preserva credencial temporária sem incluí-la no manifesto de imagens", () => {
+  const token = "x".repeat(43);
+  const lote = new Lote({ ...manifesto(), lote_token: token });
+  assert.equal(lote.token, token);
+  assert.equal(lote.imagens.some(item => "lote_token" in item), false);
+  assert.throws(() => new Lote({ ...manifesto(), lote_token: "curto" }),
+    /Credencial temporária/);
+});
+
 test("mensagem antiga para PDF em subpasta identifica backend desatualizado", () => {
   const nome = "Nova pasta/Grade_de_respostas_com_linhas (1).pdf";
   const lote = new Lote({ lote_id: "b".repeat(32), total: 2, imagens: [

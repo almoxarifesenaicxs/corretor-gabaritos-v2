@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { apiUrl, request, jsonPost, upload } from "../js/api.mjs";
+import { apiUrl, request, requestBinary, jsonPost, upload } from "../js/api.mjs";
 import { authSession } from "../js/auth.mjs";
 
 test.beforeEach(t => t.mock.method(authSession, "getToken", async () => "token-simulado"));
@@ -91,4 +91,18 @@ test("uploads PDF JPG PNG preservam FormData sem fixar boundary", async (t) => {
     assert.equal(options.body.get("gabarito"), '{"1":"A"}');
     assert.equal(options.body.get("captura"), "false");
   }
+});
+
+test("download de imagem ZIP envia a credencial temporária somente no cabeçalho", async (t) => {
+  let url, headers;
+  t.mock.method(globalThis, "fetch", async (target, options) => {
+    url = target;
+    headers = options.headers;
+    return { ok: true, status: 200 };
+  });
+  const token = "x".repeat(43);
+  await requestBinary("/api/lotes/" + "a".repeat(32) + "/imagens/0",
+    { headers: { "X-Lote-Token": token } });
+  assert.equal(headers.get("X-Lote-Token"), token);
+  assert.equal(url.includes(token), false);
 });

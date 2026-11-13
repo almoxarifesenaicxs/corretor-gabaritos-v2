@@ -57,7 +57,7 @@ async function intercept(context) {
       return route.abort('blockedbyclient');
     }
     if (url.pathname === '/interface/js/config.mjs') return route.fulfill({
-      contentType: 'text/javascript', body: 'export const API_BASE_URL=""; export const AUTH_REQUIRED=false; export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN=""; export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";' });
+      contentType: 'text/javascript', body: 'export const API_BASE_URL=""; export const PUBLIC_DEMO=false; export const PUBLIC_OPEN=false; export const AUTH_REQUIRED=false; export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN=""; export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";' });
     if (!url.pathname.startsWith('/api/')) return route.continue();
     assert.equal(request.headers().authorization, undefined);
     let payload;

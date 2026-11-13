@@ -1,4 +1,8 @@
 import { renderOfficial, renderResult } from "./revisao.mjs";
+import * as runtimeConfig from "./config.mjs";
+const { PUBLIC_DEMO, PUBLIC_OPEN } = runtimeConfig;
+const PUBLIC_SHARED = runtimeConfig.PUBLIC_SHARED === true;
+import { getPublicSessionId } from "./public-session.mjs";
 import { tabFromHash } from "./paginas.mjs";
 
 import {
@@ -47,14 +51,19 @@ let origemLote = null;
 let loteOperacao = null;
 let restaurandoLote = false;
 let loteRestauracaoPendente = null;
-const LOTE_KEY = "corretor:lote-operacional:v1";
+let loteRestauracaoToken = null;
+const LOTE_KEY = "corretor:lote-operacional:v1" + (PUBLIC_OPEN ? `:${getPublicSessionId()}` : "");
+
+function cabecalhoLote(token = lote?.token) {
+  return token ? { "X-Lote-Token": token } : {};
+}
 
 function persistirLote() {
   if (!recovery.enabled) return;
   try {
     if (lote?.cancelado) localStorage.removeItem(LOTE_KEY);
     else if (lote) localStorage.setItem(LOTE_KEY, JSON.stringify({
-      id: lote.id, atual: lote.atual, operacao: loteOperacao,
+      id: lote.id, token: lote.token, atual: lote.atual, operacao: loteOperacao,
       estados: lote.imagens.map(item => ({ estado: item.estado, tentada: item.tentada,
         erro: item.erro, operacaoId: item.operacaoId })),
     }));
@@ -101,9 +110,11 @@ async function restaurarLote() {
   restaurandoLote = true;
   updateButtons();
   try {
-    const manifesto = await request(`/api/lotes/${anterior.id}`);
+    const manifesto = await request(`/api/lotes/${anterior.id}`, {
+      headers: cabecalhoLote(anterior.token),
+    });
     if (lote) return;
-    const restaurado = new Lote(manifesto);
+    const restaurado = new Lote({ ...manifesto, lote_token: anterior.token || undefined });
     if (!Array.isArray(anterior.estados) || anterior.estados.length !== restaurado.imagens.length)
       throw new Error("Estado local do lote incompatível.");
     for (const estado of anterior.estados) {
@@ -140,7 +151,10 @@ async function restaurarLote() {
     renderLote();
   } catch (error) {
     if (error.status === 404) localStorage.removeItem(LOTE_KEY);
-    else loteRestauracaoPendente = anterior.id;
+    else {
+      loteRestauracaoPendente = anterior.id;
+      loteRestauracaoToken = anterior.token || null;
+    }
     $("batch-current").textContent = error.status === 404
       ? "ZIP temporário perdido. Confira o CSV e reimporte o lote."
       : "Restauração pendente: confira o CSV e a conexão. Após a conferência, cancele este lote para reimportar.";
@@ -161,7 +175,9 @@ async function carregarImagemLote() {
     if (!item) { message("Não há outras imagens pendentes neste lote."); return; }
     renderLote();
     setBusy(true, "Carregando imagem do lote…");
-    const resposta = await requestBinary(`/api/lotes/${lote.id}/imagens/${item.indice}`);
+    const resposta = await requestBinary(`/api/lotes/${lote.id}/imagens/${item.indice}`, {
+      headers: cabecalhoLote(),
+    });
     if (!sessionCurrent(generation)) return;
     const dados = await resposta.arrayBuffer();
     if (!sessionCurrent(generation)) return;
@@ -207,8 +223,9 @@ if (recovery.enabled) {
     if (!arquivo || busy) return;
     try {
       if (lote && !lote.cancelado) throw new Error("Conclua ou cancele o lote atual primeiro.");
-      if (!/\.zip$/i.test(arquivo.name) || !arquivo.size || arquivo.size > 32 * 1024 * 1024)
-        throw new Error("Selecione um ZIP não vazio de até 32 MiB.");
+      const maximo = PUBLIC_SHARED ? 8 : 32;
+      if (!/\.zip$/i.test(arquivo.name) || !arquivo.size || arquivo.size > maximo * 1024 * 1024)
+        throw new Error(`Selecione um ZIP não vazio de até ${maximo} MiB.`);
       setBusy(true, "Importando ZIP…");
       lote = new Lote(await upload("/api/lotes/zip", arquivo));
       origemLote = null;
@@ -230,9 +247,12 @@ if (recovery.enabled) {
       if (recovery.list().length)
         throw new Error("Resolva a operação inconclusiva antes de cancelar o lote.");
       setBusy(true, "Cancelando lote…");
-      await request(`/api/lotes/${lote?.id || loteRestauracaoPendente}`, { method: "DELETE" });
+      await request(`/api/lotes/${lote?.id || loteRestauracaoPendente}`, {
+        method: "DELETE", headers: cabecalhoLote(lote?.token || loteRestauracaoToken),
+      });
       lote?.cancelar();
       loteRestauracaoPendente = null;
+      loteRestauracaoToken = null;
       localStorage.removeItem(LOTE_KEY);
       origemLote = null;
       clearSource();
@@ -576,7 +596,9 @@ function showCameraState(data) {
 const camera = new Camera({
   video: $("camera-video"),
   onState: showCameraState,
-  analyze: (blob, signal) => upload("/api/capturas/analisar", blob, {}, signal),
+  analyze: PUBLIC_DEMO || PUBLIC_OPEN || PUBLIC_SHARED
+    ? async () => ({ estado: "amarelo", cantos: [], mensagem: "Confira o enquadramento antes de fotografar." })
+    : (blob, signal) => upload("/api/capturas/analisar", blob, {}, signal),
 });
 const nameReader = new StudentNameReader({
   field: $("student-name"),
@@ -872,7 +894,7 @@ function switchTab(next) {
   $("evaluation-fields").hidden = !isEvaluation;
   $("correction-fields").hidden = !isCorrection;
   $("student-link-panel").hidden = !isCorrection;
-  $("capture-workspace").hidden = tab === "alunos";
+  $("capture-workspace").hidden = tab === "alunos" || (PUBLIC_DEMO && isEvaluation);
   $("students-panel").hidden = tab !== "alunos";
   $("official-panel").hidden = !isEvaluation;
   $("result-panel").hidden = !isCorrection;
@@ -883,10 +905,10 @@ function switchTab(next) {
     alunos: "Alunos",
   }[tab];
   $("page-description").textContent = isEvaluation
-    ? "Cadastre uma avaliação e confira o gabarito antes de começar."
+    ? (PUBLIC_DEMO ? "Escolha a avaliação fictícia para testar a correção." : "Cadastre uma avaliação e confira o gabarito antes de começar.")
     : isCorrection
-      ? "Capture o cartão do aluno, confira o resultado e salve quando estiver pronto."
-      : "Pesquise alunos e consulte as avaliações e correções salvas.";
+      ? (PUBLIC_DEMO ? "Capture um cartão fictício e revise as 50 respostas. Nada será salvo." : "Capture o cartão do aluno, confira o resultado e salve quando estiver pronto.")
+      : (PUBLIC_DEMO ? "Não há dados reais de alunos na demonstração." : "Pesquise alunos e consulte as avaliações e correções salvas.");
   $("breadcrumb").textContent = $("page-title").textContent;
   if (tab === "alunos") students.load();
   if (isCorrection) students.refreshMatches();

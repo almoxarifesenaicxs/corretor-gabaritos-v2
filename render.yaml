@@ -1,5 +1,5 @@
 # Preparação somente. Importar um Blueprint na Render pode iniciar um deploy.
-# Homologação de infraestrutura: somente GET /api/health, sem Firebase.
+# Modo público compartilhado: exige projeto Firestore dedicado e segredos manuais.
 services:
   - type: web
     name: corretor-gabaritos-v2-api
@@ -24,8 +24,28 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: APP_AMBIENTE
-        value: homologacao
+        value: publico_compartilhado
       - key: SERVIR_FRONTEND
         value: "false"
       - key: ALLOWED_HOSTS
         sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FIRESTORE_MODO
+        value: real
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_PRODUCTION_PROJECT_ID
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/firestore-publico.json
+      - key: INTEGRIDADE_CHAVE
+        sync: false
+      - key: LOTE_ZIP_MAX_MIB
+        value: "8"
+      - key: LOTE_MAX_IMAGENS
+        value: "20"
+      - key: LOTE_TOTAL_MAX_MIB
+        value: "50"
+      - key: LOTE_PDF_MAX_PAGINAS
+        value: "10"

@@ -146,6 +146,8 @@ class Persistencia:
 
     def _indice_legado(self):
         """Uma varredura por processo/projeto, sem escrever ou migrar dados antigos."""
+        if getattr(self.cliente, "legacy_scan", True) is False:
+            return {}
         projeto = self.cliente.project
         chave = projeto if isinstance(projeto, str) else id(self.cliente)
         with _LEGADOS_LOCK:

@@ -14,12 +14,12 @@ from test_correcao import gabarito, respostas
 RAIZ = Path(__file__).resolve().parents[2]
 
 
-def test_blueprint_homologacao_sem_credenciais_e_comandos_seguros():
+def test_blueprint_publico_compartilhado_sem_credenciais_versionadas_e_comandos_seguros():
     service = yaml.safe_load((RAIZ / "render.yaml").read_text())["services"][0]
     variaveis = {item["key"]: item for item in service["envVars"]}
     assert service["rootDir"] == "Backend"
     assert service["autoDeployTrigger"] == "off"
-    assert variaveis["APP_AMBIENTE"]["value"] == "homologacao"
+    assert variaveis["APP_AMBIENTE"]["value"] == "publico_compartilhado"
     assert variaveis["SERVIR_FRONTEND"]["value"] == "false"
     assert variaveis["PYTHON_VERSION"]["value"] == (RAIZ / "Backend/.python-version").read_text().strip()
     assert service["startCommand"] == 'python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --no-proxy-headers --workers 1'
@@ -27,8 +27,21 @@ def test_blueprint_homologacao_sem_credenciais_e_comandos_seguros():
     assert "python scripts/verificar_runtime.py" in service["buildCommand"]
     assert service["healthCheckPath"] == "/api/health"
     assert variaveis["ALLOWED_HOSTS"] == {"key": "ALLOWED_HOSTS", "sync": False}
+    for nome in ("CORS_ORIGINS", "FIREBASE_PROJECT_ID", "FIREBASE_PRODUCTION_PROJECT_ID",
+                 "INTEGRIDADE_CHAVE"):
+        assert variaveis[nome] == {"key": nome, "sync": False}
+    assert variaveis["GOOGLE_APPLICATION_CREDENTIALS"]["value"] == "/etc/secrets/firestore-publico.json"
+    assert variaveis["FIRESTORE_MODO"]["value"] == "real"
+    assert {nome: variaveis[nome]["value"] for nome in
+            ("LOTE_ZIP_MAX_MIB", "LOTE_MAX_IMAGENS", "LOTE_TOTAL_MAX_MIB", "LOTE_PDF_MAX_PAGINAS")} == {
+                "LOTE_ZIP_MAX_MIB": "8", "LOTE_MAX_IMAGENS": "20",
+                "LOTE_TOTAL_MAX_MIB": "50", "LOTE_PDF_MAX_PAGINAS": "10"}
     assert set(variaveis) == {"PYTHON_VERSION", "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED",
-                             "APP_AMBIENTE", "SERVIR_FRONTEND", "ALLOWED_HOSTS"}
+                             "APP_AMBIENTE", "SERVIR_FRONTEND", "ALLOWED_HOSTS", "CORS_ORIGINS",
+                             "FIRESTORE_MODO", "FIREBASE_PROJECT_ID", "FIREBASE_PRODUCTION_PROJECT_ID",
+                             "GOOGLE_APPLICATION_CREDENTIALS", "INTEGRIDADE_CHAVE",
+                             "LOTE_ZIP_MAX_MIB", "LOTE_MAX_IMAGENS", "LOTE_TOTAL_MAX_MIB",
+                             "LOTE_PDF_MAX_PAGINAS"}
 
 
 def test_health_sem_frontend_autenticacao_ou_firestore(monkeypatch, tmp_path):

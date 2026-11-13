@@ -12,7 +12,7 @@
     <section id="login-panel" aria-label="Acesso administrativo">
       <div id="session-wait" class="login-card" role="status" aria-live="polite">
         <h1>Corretor de Gabaritos</h1>
-        <p id="session-status">Verificando sessão…</p>
+        <p id="session-status">Carregando sistema…</p>
         <button id="session-retry" type="button" hidden>Tentar novamente</button>
       </div>
       <form id="login-form" class="login-card" hidden>
@@ -143,6 +143,15 @@
         </div>
         <span class="outline-badge">50 questões · A–E</span>
       </header>
+      <p id="demo-banner" class="demo-banner" role="note" hidden>
+        Demonstração pública: use apenas cartões fictícios. A avaliação é de exemplo;
+        resultados não são salvos. Cadastro, ZIP e exportação não estão disponíveis.
+      </p>
+      <p id="public-banner" class="demo-banner" role="note" hidden>
+        Acesso público compartilhado: qualquer visitante pode consultar e alterar
+        alunos, avaliações e resultados. Não use dados pessoais ou sigilosos.
+        Exporte o CSV regularmente para conferência.
+      </p>
       <p id="message" role="status" aria-live="polite" hidden></p>
       <template data-page-slot="evaluation-fields"></template>
       <template data-page-slot="correction-fields"></template>

@@ -60,6 +60,7 @@ class Lote:
     pasta: TemporaryDirectory
     criado: float
     imagens: list[dict]
+    owner: str | None = None
 
     @property
     def caminho(self) -> Path:
@@ -77,8 +78,13 @@ class LotesZIP:
                 lote.pasta.cleanup()
                 del self._lotes[identificador]
 
-    def criar(self, arquivo) -> dict:
+    def criar(self, arquivo, owner: str | None = None) -> dict:
         regras = limites()
+        if owner is not None:
+            regras = {**regras, "zip": min(regras["zip"], 8 * 1024 * 1024),
+                      "imagens": min(regras["imagens"], 20),
+                      "total": min(regras["total"], 50 * 1024 * 1024),
+                      "paginas_pdf": min(regras["paginas_pdf"], 10)}
         if Path(arquivo.filename or "").suffix.lower() != ".zip":
             raise HTTPException(415, "Selecione um arquivo ZIP.")
         with self._lock:
@@ -99,7 +105,7 @@ class LotesZIP:
                     raise HTTPException(400, "ZIP vazio.")
                 imagens = self._manifesto(caminho, regras)
                 identificador = uuid4().hex
-                self._lotes[identificador] = Lote(pasta, monotonic(), imagens)
+                self._lotes[identificador] = Lote(pasta, monotonic(), imagens, owner)
                 return {"lote_id": identificador, "total": len(imagens), "imagens": imagens}
             except Exception:
                 pasta.cleanup()
@@ -203,17 +209,17 @@ class LotesZIP:
         except BadZipFile:
             raise HTTPException(400, "Arquivo ZIP inválido.") from None
 
-    def manifesto(self, identificador: str) -> dict:
+    def manifesto(self, identificador: str, owner: str | None = None) -> dict:
         with self._lock:
             self._limpar_expirados()
             lote = self._lotes.get(identificador)
-            if lote is None:
+            if lote is None or lote.owner != owner:
                 raise HTTPException(404, "Lote inexistente ou expirado.")
             return {"lote_id": identificador, "total": len(lote.imagens), "imagens": lote.imagens}
 
-    def imagem(self, identificador: str, indice: int) -> tuple[bytes, str, str]:
+    def imagem(self, identificador: str, indice: int, owner: str | None = None) -> tuple[bytes, str, str]:
         with self._lock:
-            manifesto = self.manifesto(identificador)
+            manifesto = self.manifesto(identificador, owner)
             if not 0 <= indice < manifesto["total"]:
                 raise HTTPException(404, "Imagem não encontrada.")
             item = manifesto["imagens"][indice]
@@ -251,11 +257,12 @@ class LotesZIP:
                 raise HTTPException(415, "Conteúdo da imagem não corresponde à extensão.")
             return conteudo, Path(item["nome"]).name, "image/png" if extensao == ".png" else "image/jpeg"
 
-    def cancelar(self, identificador: str):
+    def cancelar(self, identificador: str, owner: str | None = None):
         with self._lock:
-            lote = self._lotes.pop(identificador, None)
-            if lote is None:
+            lote = self._lotes.get(identificador)
+            if lote is None or lote.owner != owner:
                 raise HTTPException(404, "Lote inexistente ou expirado.")
+            del self._lotes[identificador]
             lote.pasta.cleanup()
 
 

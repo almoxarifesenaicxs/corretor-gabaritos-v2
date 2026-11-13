@@ -5,6 +5,10 @@ export class Lote {
         !Array.isArray(manifesto?.imagens) || manifesto.imagens.length !== manifesto.total)
       throw new Error("Manifesto do lote inválido.");
     this.id = manifesto.lote_id;
+    if (manifesto.lote_token !== undefined &&
+        !/^[A-Za-z0-9_-]{43}$/.test(manifesto.lote_token))
+      throw new Error("Credencial temporária do lote inválida.");
+    this.token = manifesto.lote_token || null;
     this.imagens = manifesto.imagens.map((item, indice) => ({
       ...item, indice,
       erro: /\.pdf$/i.test(item.nome) &&

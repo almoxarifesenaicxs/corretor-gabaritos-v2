@@ -1,10 +1,10 @@
 # Frontend estático na Vercel
 
-O frontend é HTML, CSS e JavaScript sem build. Na Vercel, o dashboard só abre
-após login Firebase e confirmação de `/api/auth/me` pelo backend.
+O frontend é HTML, CSS e JavaScript sem build. Na configuração pública atual,
+o dashboard abre sem login e usa os registros compartilhados do modo
+[`publico_compartilhado`](publico-compartilhado.md) na Render.
 As abas Avaliações, Correção e Alunos usam hashes (`/#avaliacoes`, `/#correcao`,
-`/#alunos`), inclusive após atualizar a página. O SDK restaura a sessão LOCAL,
-mas o backend precisa autorizar o UID em toda visita e requisição.
+`/#alunos`), inclusive após atualizar a página.
 
 | Configuração Vercel | Valor |
 | --- | --- |
@@ -18,21 +18,21 @@ mas o backend precisa autorizar o UID em toda visita e requisição.
 Não adicionar segredos em `Frontend`: todos os arquivos publicados são públicos.
 
 `Frontend/js/config.mjs` define `API_BASE_URL`, com a origem HTTPS da
-Render, sem `/api`, caminho, query ou credenciais. Também contém apenas os valores
-públicos do aplicativo Web Firebase: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`,
-`FIREBASE_PROJECT_ID` e `FIREBASE_APP_ID`. Senhas e contas de serviço nunca entram
-nesse arquivo. `api.mjs` acrescenta os caminhos
+Render, sem `/api`, caminho, query ou credenciais. Os campos públicos Firebase
+estão vazios no modo atual; senhas e contas de serviço nunca entram nesse
+arquivo. `api.mjs` acrescenta os caminhos
 `/api/...`. Como o frontend é estático, alterar essa origem exige publicar nova
 versão. Em `localhost` ou `127.0.0.1`, a configuração usa a API da mesma origem;
 o backend `local_operacional` entrega uma configuração local sem Firebase Auth.
 O navegador não injeta variáveis da Vercel em tempo de execução.
 
-PDF/JPG/PNG continuam usando `FormData`; o navegador define o boundary. A webcam
-exige HTTPS ou localhost e permissão do usuário. Falhas de rede e 503 mostram
-mensagem sem repetir gravações automaticamente. Respostas 401/403 encerram a
-sessão e bloqueiam o dashboard. JSON e multipart enviam ID Token em Bearer.
+PDF/JPG/PNG continuam usando `FormData`; o navegador define o boundary. ZIPs
+usam uma credencial temporária de lote no cabeçalho `X-Lote-Token` para baixar
+imagens, sem autenticar o acesso aos registros compartilhados. A webcam exige
+HTTPS ou localhost e permissão do usuário. Falhas de rede e 503 mostram
+mensagem sem repetir gravações automaticamente.
 
-O backend preparado na Render permanece em `homologacao`, que aceita apenas
-`GET /api/health`. Para operar remotamente com dados reais, configurar e validar
-`APP_AMBIENTE=producao` conforme [login administrativo](login-administrativo.md).
-Nenhum deploy ou mudança de configuração da Render é realizado por este código.
+O `render.yaml` está preparado para `publico_compartilhado`, com deploy
+automático desligado. A configuração manual e o piloto com dados fictícios
+estão descritos em [operação pública compartilhada](publico-compartilhado.md).
+Nenhum deploy ou mudança externa é realizado por este código.

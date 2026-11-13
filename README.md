@@ -1,9 +1,11 @@
 # Corretor Automático de Gabaritos V2
 
-Na Vercel, o dashboard exige login Firebase e autorização administrativa do backend;
-veja [login administrativo](docs/login-administrativo.md). A Render permanece em
-`homologacao` até a configuração segura do modo `producao`. O modo
-`local_operacional` mantém acesso sem login restrito ao loopback.
+O frontend público na Vercel abre sem login. O modo preparado para a Render é
+`publico_compartilhado`, com registros persistentes em um projeto Firestore
+dedicado: **qualquer visitante pode consultar e alterar esses registros**.
+Consulte [operação pública compartilhada](docs/publico-compartilhado.md) antes
+de publicar. O modo `local_operacional` continua restrito ao loopback; o modo
+`producao` com login Firebase permanece disponível, mas não é a entrega atual.
 
 Sistema web desenvolvido para automatizar a correção de avaliações escolares utilizando visão computacional, processamento de imagens e comparação automática de respostas.
 
