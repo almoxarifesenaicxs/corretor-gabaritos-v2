@@ -270,7 +270,17 @@ def identificar_tabelas(binaria: np.ndarray) -> list[tuple[list[int], list[int]]
     def centros(projecao, limiar):
         indices = np.flatnonzero(projecao >= limiar)
         grupos = np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1)
-        return [int(round(float(np.mean(g)))) for g in grupos if g.size]
+        picos = [int(round(float(np.mean(g)))) for g in grupos if g.size]
+        # Uma linha fina ondulada pode produzir dois picos adjacentes na
+        # projeção. Eles representam o mesmo limite de célula: a distância
+        # é menor que a faixa usada para conectar a malha, não um passo real.
+        unidos = []
+        for pico in picos:
+            if unidos and pico - unidos[-1] <= faixa:
+                unidos[-1] = round((unidos[-1] + pico) / 2)
+            else:
+                unidos.append(pico)
+        return unidos
 
     for contorno in contornos:
         x, y, w, h = cv2.boundingRect(contorno)
@@ -290,12 +300,16 @@ def identificar_tabelas(binaria: np.ndarray) -> list[tuple[list[int], list[int]]
                 raise ErroLeitura("Tabela com espaçamento irregular.")
         # Cada limite precisa existir em quase toda a extensão da tabela.
         for xx in xs:
-            if np.count_nonzero(vertical[y:y+h, x+xx]) < h * 0.90:
+            esquerda = max(x, x + xx - faixa)
+            direita = min(x + w, x + xx + faixa + 1)
+            if np.count_nonzero(np.any(vertical[y:y+h, esquerda:direita], axis=1)) < h * 0.90:
                 raise ErroLeitura("Tabela com linha vertical interrompida.")
         for indice, yy in enumerate(ys):
             # A borda superior não cobre a coluna de numeração.
             minimo = 0.78 if indice == 0 else 0.95
-            if np.count_nonzero(horizontal[y+yy, x:x+w]) < w * minimo:
+            topo = max(y, y + yy - faixa)
+            base = min(y + h, y + yy + faixa + 1)
+            if np.count_nonzero(np.any(horizontal[topo:base, x:x+w], axis=0)) < w * minimo:
                 raise ErroLeitura("Tabela com linha horizontal interrompida.")
         tabelas.append(([x + xx for xx in xs], [y + yy for yy in ys]))
     if not tabelas:

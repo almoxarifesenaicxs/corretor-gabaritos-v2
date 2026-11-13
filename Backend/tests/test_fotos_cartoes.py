@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from app.services.captura import retificar_captura
 from app.services.correcao_visual import preparar_visualizacao
 from app.services.reconhecimento import ErroLeitura, converter_pagina_pdf, reconhecer_imagem
 
@@ -102,6 +103,45 @@ def test_ondulacao_leve_sinaliza_incerteza_sem_trocar_alternativa():
     esperado = "ABCDE" * 10
     assert sum(respostas[str(i+1)]["resposta"] == esperado[i] for i in range(50)) >= 30
     assert all(respostas[str(i+1)]["resposta"] in (None, esperado[i]) for i in range(50))
+
+
+def test_pipeline_camera_com_ondulacao_nao_rejeita_nem_inventa_respostas():
+    pagina = _grade_sintetica()
+    altura, largura = pagina.shape[:2]
+    yy, xx = np.indices((altura, largura), dtype=np.float32)
+    ondulada = cv2.remap(pagina, (xx + 5*np.sin(yy/160)).astype(np.float32),
+                         (yy + 5*np.sin(xx/170)).astype(np.float32),
+                         cv2.INTER_LINEAR, borderValue=(255, 255, 255))
+    foto = _fotografar(ondulada, perspectiva=True)
+    foto = cv2.resize(foto, None, fx=2560/2600, fy=2560/2600,
+                      interpolation=cv2.INTER_AREA)
+    jpeg = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+    recebida = cv2.imdecode(np.frombuffer(retificar_captura(jpeg), np.uint8), cv2.IMREAD_COLOR)
+    assert recebida.shape[:2] == (1754, 1240)
+    respostas = reconhecer_imagem(recebida)
+    assert len(respostas) == 50
+    esperado = "ABCDE" * 10
+    assert any(respostas[str(i+1)]["resposta"] == esperado[i] for i in range(50))
+    assert all(respostas[str(i+1)]["resposta"] in (None, esperado[i]) for i in range(50))
+
+
+@pytest.mark.parametrize("nome,esperado", REFERENCIAS)
+def test_pipeline_camera_preserva_tres_cartoes_pdf(nome, esperado):
+    arquivo = Path(os.environ.get("CORRETOR_PDFS_VARIANTES_ZIP",
+                                  str(Path.home() / "Downloads" / "Nova pasta.zip")))
+    if not arquivo.is_file():
+        pytest.skip("PDFs originais indisponíveis para regressão.")
+    with ZipFile(arquivo) as zip_arquivo, TemporaryDirectory(prefix="foto-grade-") as temporario:
+        pdf = Path(temporario) / "cartao.pdf"
+        pdf.write_bytes(zip_arquivo.read(f"Nova pasta/{nome}"))
+        pagina = converter_pagina_pdf(pdf, 0)
+    foto = _fotografar(pagina, perspectiva=True, sombra=True)
+    foto = cv2.resize(foto, None, fx=2560/2600, fy=2560/2600,
+                      interpolation=cv2.INTER_AREA)
+    jpeg = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+    recebida = cv2.imdecode(np.frombuffer(retificar_captura(jpeg), np.uint8), cv2.IMREAD_COLOR)
+    respostas = reconhecer_imagem(recebida)
+    assert [respostas[str(i)]["resposta"] for i in range(1, 51)] == list(esperado)
 
 
 @pytest.mark.parametrize("nome,esperado", REFERENCIAS)

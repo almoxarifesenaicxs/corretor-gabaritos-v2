@@ -89,6 +89,32 @@ def test_grade_nao_identificada():
     assert "grade" in response.json()["detail"]
 
 
+def test_diagnostico_da_captura_registra_so_metadados(caplog):
+    branco = np.full((500, 600, 3), 255, np.uint8)
+    conteudo = cv2.imencode(".jpg", branco)[1].tobytes()
+    with caplog.at_level("INFO", logger="app.routes.correcoes"):
+        response = client.post(URL,
+            files={"arquivo": ("aluno-privado.jpg", conteudo, "image/jpeg")},
+            data={"gabarito": json.dumps(OFICIAL), "captura": "true"})
+    assert response.status_code == 422
+    assert "entrada_px=600x500" in caplog.text
+    assert "processado_px=600x500" in caplog.text
+    assert "etapa=grade_circular" in caplog.text
+    assert "aluno-privado" not in caplog.text
+
+
+@pytest.mark.parametrize("mensagem,codigo", [
+    ("Tabela incompleta: esperadas seis colunas", "tabela_contagem_linhas_colunas"),
+    ("Tabela com linha vertical interrompida.", "tabela_continuidade_vertical"),
+    ("Tabela com linha horizontal interrompida.", "tabela_continuidade_horizontal"),
+    ("Tabela com espaçamento irregular.", "tabela_espacamento"),
+    ("Esperadas duas tabelas lado a lado.", "tabelas_posicionamento"),
+    ("caminho privado ou nome de aluno", "nao_classificada"),
+])
+def test_codigo_de_rejeicao_nao_expoe_mensagem(mensagem, codigo):
+    assert correcoes._etapa_rejeicao(ErroLeitura(mensagem)) == codigo
+
+
 def test_pdf_protegido():
     with pymupdf.open() as documento:
         documento.new_page()
