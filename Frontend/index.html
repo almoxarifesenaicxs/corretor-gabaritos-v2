@@ -9,15 +9,15 @@
     <script type="module" src="js/app.mjs"></script>
   </head>
   <body inert class="login-required">
-    <section id="login-panel" aria-label="Acesso ao Corretor de Gabaritos">
+    <section id="login-panel" aria-label="Acesso administrativo">
       <div id="session-wait" class="login-card" role="status" aria-live="polite">
         <h1>Corretor de Gabaritos</h1>
         <p id="session-status">Verificando sessão…</p>
         <button id="session-retry" type="button" hidden>Tentar novamente</button>
       </div>
       <form id="login-form" class="login-card" hidden>
-        <h1 id="login-title">Corretor de Gabaritos</h1>
-        <p>Entre com sua conta autorizada.</p>
+        <h1>Corretor de Gabaritos</h1>
+        <p>Entre com a conta administradora autorizada.</p>
         <label for="login-email">E-mail</label>
         <input id="login-email" name="email" type="email" autocomplete="username" required />
         <label for="login-password">Senha</label>
@@ -153,6 +153,7 @@
         <template data-page-slot="result-panel"></template>
       </div>
       <template data-page-slot="visual-panel"></template>
+      <template data-page-slot="event-panels"></template>
       <template data-page-slot="students-panel"></template>
       <template data-page-slot="evaluation-list-panel"></template>
       <footer>

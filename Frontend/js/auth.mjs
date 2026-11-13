@@ -85,6 +85,7 @@ export function createAuth({ apiKey = FIREBASE_API_KEY, authDomain = FIREBASE_AU
 
   return {
     logout,
+    getGeneration() { return generation; },
     onLogout(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     onBlocked(listener) { blockedListeners.add(listener); return () => blockedListeners.delete(listener); },
     onLogoutFailure(listener) { failureListeners.add(listener); return () => failureListeners.delete(listener); },

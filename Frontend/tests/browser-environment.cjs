@@ -5,7 +5,6 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { chromium: realChromium } = require('playwright');
-const TOKEN = 'id-token-simulado-sem-validade';
 const env = { baseURL: '', artifacts: '', blocked: [], unexpected: [] };
 const root = path.resolve(__dirname, '..');
 let server, picture;
@@ -58,13 +57,11 @@ async function intercept(context) {
       return route.abort('blockedbyclient');
     }
     if (url.pathname === '/interface/js/config.mjs') return route.fulfill({
-      contentType: 'text/javascript', body: 'export const API_BASE_URL=""; export const FIREBASE_API_KEY="publica-simulada"; export const FIREBASE_AUTH_DOMAIN="demo.example.test"; export const FIREBASE_PROJECT_ID="demo-corretor"; export const FIREBASE_APP_ID="1:000:web:qa";' });
+      contentType: 'text/javascript', body: 'export const API_BASE_URL=""; export const AUTH_REQUIRED=false; export const FIREBASE_API_KEY=""; export const FIREBASE_AUTH_DOMAIN=""; export const FIREBASE_PROJECT_ID=""; export const FIREBASE_APP_ID="";' });
     if (!url.pathname.startsWith('/api/')) return route.continue();
-    if (request.headers().authorization !== `Bearer ${TOKEN}`)
-      return route.fulfill({ status: 401, json: { detail: 'Sessão inválida ou expirada.' } });
+    assert.equal(request.headers().authorization, undefined);
     let payload;
     switch (url.pathname) {
-      case '/api/auth/me': payload = { uid: 'admin-simulado' }; break;
       case '/api/avaliacoes': case '/api/alunos': payload = []; break;
       case '/api/alunos/correspondencias': payload = { exato: null, exatos: [], semelhantes: [] }; break;
       case '/api/capturas/analisar': payload = { estado: 'vermelho', mensagem: 'Folha não detectada.', cantos: [], folha_visivel: false }; break;
@@ -90,67 +87,6 @@ async function intercept(context) {
     }
     return route.fulfill({ json: payload });
   });
-  // SDK sintético: nenhum módulo do CDN nem endpoint Firebase real é consultado.
-  await context.route('https://www.gstatic.com/firebasejs/13.2.0/**', route => {
-    const name = new URL(route.request().url()).pathname.split('/').at(-1);
-    const body = name === 'firebase-app.js'
-      ? 'export const initializeApp = options => ({ options });'
-      : name === 'firebase-auth.js' ? `
-        export const browserLocalPersistence = { type: 'LOCAL' };
-        export function initializeAuth(app, { persistence }) {
-          if (persistence !== browserLocalPersistence) throw new Error('Persistência incorreta');
-          const auth = { currentUser: null, listeners: new Set(), authStateReady: async () => {} };
-          const saved = localStorage.getItem('firebase-auth-simulado');
-          if (saved) auth.currentUser = { uid: saved === '${TOKEN}' ? 'admin-simulado' : saved, token: '${TOKEN}' };
-          window.addEventListener('storage', event => {
-            if (event.key !== 'firebase-auth-simulado') return;
-            auth.currentUser = event.newValue
-              ? { uid: event.newValue === '${TOKEN}' ? 'admin-simulado' : event.newValue, token: '${TOKEN}' }
-              : null;
-            for (const callback of auth.listeners) callback(auth.currentUser);
-          });
-          return auth;
-        }
-        export function onAuthStateChanged(auth, callback) {
-          auth.listeners.add(callback);
-          queueMicrotask(() => callback(auth.currentUser));
-          return () => auth.listeners.delete(callback);
-        }
-        export async function signInWithEmailAndPassword(auth, email, password) {
-          const response = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=publica-simulada',
-            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, password, returnSecureToken: true }) });
-          if (!response.ok) throw Object.assign(new Error('Login recusado'), { code: 'auth/invalid-credential' });
-          const data = await response.json();
-          auth.currentUser = { uid: 'admin-simulado', token: data.idToken };
-          localStorage.setItem('firebase-auth-simulado', data.idToken);
-          for (const callback of auth.listeners) callback(auth.currentUser);
-          return { user: auth.currentUser };
-        }
-        export async function getIdToken(user) { return user.token; }
-        export async function signOut(auth) {
-          auth.currentUser = null;
-          localStorage.removeItem('firebase-auth-simulado');
-          for (const callback of auth.listeners) callback(null);
-        }
-      ` : null;
-    if (!body) { env.unexpected.push(route.request().url()); return route.abort(); }
-    return route.fulfill({ contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body });
-  });
-  // Fulfill sem acesso de rede: inclusive preflight, caso o navegador o emita.
-  await context.route('https://identitytoolkit.googleapis.com/**', route => {
-    const request = route.request();
-    const headers = { 'access-control-allow-origin': env.baseURL,
-      'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST' };
-    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-    assert.equal(new URL(request.url()).searchParams.get('key'), 'publica-simulada');
-    assert.deepEqual(request.postDataJSON(), { email: 'admin@example.test', password: 'senha-simulada', returnSecureToken: true });
-    return route.fulfill({ headers, json: { idToken: TOKEN, refreshToken: 'refresh-simulado', expiresIn: '3600' } });
-  });
-  context.on('request', request => {
-    if (new URL(request.url()).pathname.startsWith('/api/') && request.headers().authorization)
-      assert.equal(request.headers().authorization, `Bearer ${TOKEN}`);
-  });
 }
 
 env.chromium = { async launch(extra) {
@@ -166,11 +102,6 @@ env.chromium = { async launch(extra) {
   return browser;
 } };
 
-env.login = async page => {
-  await page.locator('#login-email').fill('admin@example.test');
-  await page.locator('#login-password').fill('senha-simulada');
-  await page.locator('#login-form button').click();
-};
 env.start = async () => {
   assert.equal(process.env.QA_BASE_URL, undefined, 'Servidor externo não permitido nesta suíte isolada.');
   assert.equal(process.env.QA_ARTIFACT_DIR, undefined, 'Artefatos são criados em pasta temporária própria.');

@@ -1,8 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { apiUrl, request, jsonPost, upload } from "../js/api.mjs";
+import { authSession } from "../js/auth.mjs";
+
+test.beforeEach(t => t.mock.method(authSession, "getToken", async () => "token-simulado"));
 
 const renderOrigin = "https://corretor-gabaritos-8yal.onrender.com";
+
+test("configuração usa loopback no navegador e Render na Vercel ou no Node", async () => {
+  const anterior = Object.getOwnPropertyDescriptor(globalThis, "location");
+  try {
+    for (const [hostname, esperado] of [
+      ["localhost", ""], ["127.0.0.1", ""],
+      ["corretor.vercel.app", renderOrigin], [undefined, renderOrigin],
+    ]) {
+      if (hostname === undefined) delete globalThis.location;
+      else Object.defineProperty(globalThis, "location", {
+        value: { hostname }, configurable: true,
+      });
+      const modulo = new URL("../js/config.mjs", import.meta.url);
+      modulo.searchParams.set("ambiente", hostname ?? "node");
+      assert.equal((await import(modulo.href)).API_BASE_URL, esperado);
+    }
+  } finally {
+    if (anterior) Object.defineProperty(globalThis, "location", anterior);
+    else delete globalThis.location;
+  }
+});
 
 test("API usa a origem pública por padrão e permite base local explícita", () => {
   const path = "/api/alunos?busca=Ana%20Silva";
@@ -35,6 +59,16 @@ test("request e JSON mantêm o contrato e o cancelamento", async (t) => {
   assert.equal(calls[1][1].headers.get("Content-Type"), "application/json");
   assert.equal(calls[1][0], renderOrigin + "/api/avaliacoes");
   assert.deepEqual(JSON.parse(calls[1][1].body), { titulo: "Teste" });
+});
+
+test("requisições protegidas substituem Authorization pelo token do Firebase", async (t) => {
+  let headers;
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    headers = options.headers;
+    return { ok: true, json: async () => [] };
+  });
+  await request("/api/avaliacoes", { headers: { Authorization: "Bearer descartado" } });
+  assert.equal(headers.get("Authorization"), "Bearer token-simulado");
 });
 
 test("uploads PDF JPG PNG preservam FormData sem fixar boundary", async (t) => {

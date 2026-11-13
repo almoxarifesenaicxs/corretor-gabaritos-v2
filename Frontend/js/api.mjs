@@ -1,9 +1,9 @@
-import { API_BASE_URL } from "./config.mjs";
+import { API_BASE_URL, AUTH_REQUIRED } from "./config.mjs";
 import { authSession } from "./auth.mjs";
 
 let gateEnabled = false, gateOpen = false, gateEpoch = 0;
 
-// A barreira de interface complementa a autorização obrigatória do backend.
+// Mantém a possibilidade de invalidar operações assíncronas da interface.
 export function setApiAccess(open) {
   gateEnabled = true;
   gateOpen = Boolean(open);
@@ -13,7 +13,8 @@ export function setApiAccess(open) {
 export function isApiAccessAllowed() { return !gateEnabled || gateOpen; }
 
 function checkAccess(path, epoch) {
-  if (path !== "/api/auth/me" && gateEnabled && (!gateOpen || epoch !== gateEpoch))
+  if (AUTH_REQUIRED && path === "/api/auth/me") return;
+  if (gateEnabled && (!gateOpen || epoch !== gateEpoch))
     throw new Error("A sessão precisa ser validada antes de continuar.");
 }
 
@@ -44,30 +45,44 @@ export async function request(url, options = {}) {
   const target = apiUrl(url);
   const epoch = gateEpoch;
   checkAccess(url, epoch);
-  const token = await authSession.getToken();
-  checkAccess(url, epoch);
   const headers = new Headers(options.headers);
   headers.delete("Authorization");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  let generation;
+  if (AUTH_REQUIRED) {
+    const token = await authSession.getToken();
+    generation = authSession.getGeneration();
+    checkAccess(url, epoch);
+    if (!token) {
+      const error = new Error("Sessão ausente ou expirada. Entre novamente.");
+      error.status = 401;
+      throw error;
+    }
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const checkCurrent = () => {
+    checkAccess(url, epoch);
+    if (AUTH_REQUIRED && generation !== authSession.getGeneration())
+      throw new Error("A operação pertence a uma sessão anterior.");
+  };
   let response;
   try {
     response = await fetch(target, { ...options, headers, cache: "no-store", redirect: "error" });
   } catch (error) {
-    checkAccess(url, epoch);
+    checkCurrent();
     if (error.name === "AbortError") throw error;
     throw new Error("Não foi possível conectar à API. Confira a conexão e tente novamente. Se estava salvando, confira o histórico ou reenvie a mesma operação.");
   }
-  // Uma resposta da geração anterior não pode encerrar a sessão atual.
-  checkAccess(url, epoch);
-  if (response.status === 401 || response.status === 403) await authSession.logout();
+  checkCurrent();
   const data = await response.json().catch(() => null);
-  checkAccess(url, epoch);
+  checkCurrent();
   if (!response.ok) {
+    if (AUTH_REQUIRED && (response.status === 401 || response.status === 403))
+      await authSession.logout();
     const detail =
       typeof data?.detail === "string"
         ? data.detail
-        : response.status === 401 ? "Sessão inválida ou expirada. Entre novamente."
-        : response.status === 403 ? "Acesso não autorizado. Confira sua conta e a origem da interface."
+        : response.status === 401 ? "A API exige autenticação; confira a configuração do backend."
+        : response.status === 403 ? "Acesso bloqueado pela configuração do backend."
         : response.status === 429 || response.status >= 500
           ? "Serviço temporariamente indisponível. Aguarde e tente novamente. Se estava salvando, confira o histórico ou reenvie a mesma operação."
           : "Confira os campos e tente novamente.";
@@ -76,9 +91,35 @@ export async function request(url, options = {}) {
     error.status = response.status;
     throw error;
   }
+  if (response.status === 204) return null;
   if (data === null)
     throw new Error("Resposta incompleta do servidor. Confira o histórico ou reenvie a mesma operação.");
   return data;
+}
+
+export async function requestBinary(url) {
+  const target = apiUrl(url);
+  const epoch = gateEpoch;
+  checkAccess(url, epoch);
+  const headers = new Headers();
+  let generation;
+  if (AUTH_REQUIRED) {
+    const token = await authSession.getToken();
+    generation = authSession.getGeneration();
+    checkAccess(url, epoch);
+    if (!token) throw new Error("Sessão ausente ou expirada. Entre novamente.");
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(target, { headers, cache: "no-store", redirect: "error" });
+  checkAccess(url, epoch);
+  if (AUTH_REQUIRED && generation !== authSession.getGeneration())
+    throw new Error("A operação pertence a uma sessão anterior.");
+  if (!response.ok) {
+    if (AUTH_REQUIRED && (response.status === 401 || response.status === 403))
+      await authSession.logout();
+    throw new Error(`Não foi possível carregar a imagem do lote (${response.status}).`);
+  }
+  return response;
 }
 
 export function jsonPost(url, data) {

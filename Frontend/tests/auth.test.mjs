@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createAuth, authSession } from "../js/auth.mjs";
-import { request, upload, setApiAccess } from "../js/api.mjs";
+import { request, requestBinary, upload, setApiAccess } from "../js/api.mjs";
 
 test("configuração ausente não carrega o Firebase", async () => {
   const auth = createAuth({ sdkLoader: () => { throw new Error("Não deve carregar SDK"); } });
@@ -24,6 +24,25 @@ test("Bearer acompanha JSON e multipart, sem alterar boundary", async (t) => {
   }
   assert.equal(calls[1].headers.has("Content-Type"), false);
   assert.ok(calls[1].body instanceof FormData);
+});
+
+test("página do ZIP e cancelamento enviam Bearer sem perder o cabeçalho de integridade", async (t) => {
+  t.mock.method(authSession, "getToken", async () => "token-simulado");
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    calls.push(options);
+    return calls.length === 1
+      ? { ok: true, status: 200, headers: new Headers({ "X-Image-SHA256": "resumo-ficticio" }),
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }
+      : { ok: true, status: 204, json: async () => null };
+  });
+  const image = await requestBinary("/api/lotes/lote/imagens/0");
+  assert.equal(image.headers.get("X-Image-SHA256"), "resumo-ficticio");
+  assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [1, 2, 3]);
+  assert.equal(await request("/api/lotes/lote", { method: "DELETE" }), null);
+  assert.equal(calls[0].headers.get("Authorization"), "Bearer token-simulado");
+  assert.equal(calls[1].headers.get("Authorization"), "Bearer token-simulado");
+  assert.equal(calls[1].method, "DELETE");
 });
 
 test("401 e 403 encerram sessão sem repetir operações", async (t) => {

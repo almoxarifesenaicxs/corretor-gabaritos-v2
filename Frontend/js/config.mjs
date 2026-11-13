@@ -1,10 +1,18 @@
-// Configuração pública entregue como arquivo estático. Nunca coloque segredos aqui.
-// Origem HTTPS pública da API, sem /api ou segredos.
-// Para uso local integrado, configurar explicitamente API_BASE_URL como "".
-// Variáveis do painel Vercel não substituem este arquivo automaticamente.
-export const API_BASE_URL = "https://corretor-gabaritos-8yal.onrender.com";
-// Chave pública do aplicativo Web Firebase (não é uma credencial administrativa).
+// Usa a API local quando o site está rodando no computador.
+// Na Vercel, continua utilizando a API da Render.
+
+const API_PUBLICA = "https://corretor-gabaritos-8yal.onrender.com";
+
+const ambienteLocal = ["localhost", "127.0.0.1"].includes(
+  globalThis.location?.hostname
+);
+
+export const API_BASE_URL = ambienteLocal ? "" : API_PUBLICA;
+
+// Valores públicos do aplicativo Web cadastrados no Firebase Console.
+// Preencher antes de publicar o frontend; nunca colocar conta de serviço aqui.
 export const FIREBASE_API_KEY = "";
 export const FIREBASE_AUTH_DOMAIN = "";
 export const FIREBASE_PROJECT_ID = "";
 export const FIREBASE_APP_ID = "";
+export const AUTH_REQUIRED = !ambienteLocal;

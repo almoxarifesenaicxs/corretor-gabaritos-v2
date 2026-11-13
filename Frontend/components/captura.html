@@ -14,7 +14,7 @@
           Posicione o cartão sobre um fundo escuro,<br />com os quatro cantos
           visíveis.
         </p>
-        <button id="camera-start" class="primary">Ativar webcam</button
+        <button id="camera-start" class="primary">Ativar câmera</button
         ><small>A permissão é solicitada pelo navegador.</small>
       </div>
       <video
@@ -23,7 +23,7 @@
         playsinline
         muted
         hidden
-        aria-label="Imagem ao vivo da webcam"
+        aria-label="Imagem ao vivo da câmera"
       ></video>
       <img id="capture-preview" hidden alt="Captura do cartão selecionado" />
       <svg
@@ -51,6 +51,17 @@
       Coloque a folha inteira dentro da moldura. Ela é uma orientação visual; o
       contorno detectado pode estar em outra posição. Use localhost ou HTTPS.
     </p>
+    <div class="mobile-photo-choice">
+      <label class="file-button" for="mobile-camera-input">Fotografar com a câmera do celular</label>
+      <input id="mobile-camera-input" type="file" accept="image/jpeg,image/png,image/*"
+        capture="environment" class="sr-only" />
+      <small>Se a câmera não abrir, escolha uma foto JPG/PNG pelo seletor de arquivos.</small>
+    </div>
+    <div id="photo-review" class="photo-review" hidden>
+      <p>Confira se as 50 questões, os quatro cantos e o nome estão legíveis. Se a foto estiver desfocada, refaça.</p>
+      <button id="confirm-photo" type="button" class="primary">Usar esta foto</button>
+      <button id="discard-photo" type="button" class="secondary">Descartar foto</button>
+    </div>
     <div class="file-choice">
       <span>ou selecione um arquivo</span
       ><label class="file-button" for="file-input"

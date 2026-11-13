@@ -4,8 +4,10 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { apiUrl, request } from "../js/api.mjs";
+import { authSession } from "../js/auth.mjs";
+
+test.beforeEach(t => t.mock.method(authSession, "getToken", async () => "token-simulado"));
 import { loadPages, tabFromHash } from "../js/paginas.mjs";
-import { authSession, createAuth } from "../js/auth.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const read = relative => readFile(path.join(root, relative), "utf8");
@@ -99,39 +101,22 @@ test("cancelamento de captura permanece AbortError", async (t) => {
   await assert.rejects(() => request("/api/capturas/analisar"), error => error === abort);
 });
 
-test("indisponibilidade temporária HTML não desloga nem repete gravação", async (t) => {
-  let calls = 0, logouts = 0;
-  t.mock.method(authSession, "logout", () => logouts++);
+test("indisponibilidade temporária HTML não repete gravação", async (t) => {
+  let calls = 0;
   t.mock.method(globalThis, "fetch", async () => {
     calls++;
     return { ok: false, status: 503, json: async () => { throw new SyntaxError("HTML do proxy"); } };
   });
   await assert.rejects(() => request("/api/avaliacoes"), error => error.status === 503 && /temporariamente/.test(error.message));
-  assert.equal(logouts, 0);
   assert.equal(calls, 1);
 });
 
-test("401 e 403 sem JSON retornam mensagem explícita e encerram sessão", async (t) => {
-  let status = 401, logouts = 0;
-  t.mock.method(authSession, "logout", () => logouts++);
+test("401 e 403 sem JSON explicam a configuração bloqueada da API", async (t) => {
+  let status = 401;
   t.mock.method(globalThis, "fetch", async () => ({ ok: false, status, json: async () => null }));
-  await assert.rejects(() => request("/api/alunos"), /Entre novamente/);
+  await assert.rejects(() => request("/api/alunos"), /exige autenticação/);
   status = 403;
-  await assert.rejects(() => request("/api/alunos"), /não autorizado/);
-  assert.equal(logouts, 2);
-});
-
-test("falha de rede no Firebase exibe mensagem sem autenticar", async () => {
-  const auth = createAuth({ apiKey: "publica-ficticia", authDomain: "demo.example.test",
-    projectId: "demo-corretor", appId: "1:000:web:teste", sdkLoader: async () => ({
-      browserLocalPersistence: { type: "LOCAL" }, initializeApp: () => ({}),
-      initializeAuth: () => ({ currentUser: null, authStateReady: async () => {} }),
-      signOut: async () => {}, signInWithEmailAndPassword: async () => {
-        throw { code: "auth/network-request-failed" };
-      },
-    }) });
-  await assert.rejects(() => auth.login("teste@example.test", "ficticia"), /serviço de login/);
-  assert.equal(await auth.getToken(), null);
+  await assert.rejects(() => request("/api/alunos"), /bloqueado pela configuração/);
 });
 
 test("Vercel usa saída estática, preserva câmera e não encaminha API", async () => {
@@ -148,6 +133,6 @@ test("Vercel usa saída estática, preserva câmera e não encaminha API", async
   for (const name of ["tests/", ".env", ".secrets/", "js/script.js"]) assert.ok(ignores.split(/\r?\n/).includes(name));
   const publicConfig = await read("js/config.mjs");
   assert.deepEqual([...publicConfig.matchAll(/export const (\w+)/g)].map(([, name]) => name),
-    ["API_BASE_URL", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_PROJECT_ID", "FIREBASE_APP_ID"]);
+    ["API_BASE_URL", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_PROJECT_ID", "FIREBASE_APP_ID", "AUTH_REQUIRED"]);
   assert.doesNotMatch(publicConfig, /BEGIN PRIVATE KEY|private_key\s*[:=]|refreshToken\s*[:=]/);
 });

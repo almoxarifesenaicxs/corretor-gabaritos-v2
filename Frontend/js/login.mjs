@@ -1,10 +1,16 @@
 import { authSession } from "./auth.mjs";
 import { request, setApiAccess } from "./api.mjs";
+import { AUTH_REQUIRED } from "./config.mjs";
 
 const sessions = new WeakMap();
 const REVALIDAR_EM_MS = 5 * 60 * 1000;
 
 export function requireLogin() {
+  if (!AUTH_REQUIRED) {
+    document.getElementById("login-panel").hidden = true;
+    document.body.classList.remove("login-required");
+    return Promise.resolve();
+  }
   const existing = sessions.get(document);
   if (existing) return existing;
 

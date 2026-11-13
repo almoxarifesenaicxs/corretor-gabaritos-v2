@@ -1,5 +1,9 @@
 # Firebase para produção — preparação
 
+> A seção de Authentication abaixo se aplica ao modo autenticado
+> `APP_AMBIENTE=producao`. O frontend hospedado usa Firebase Authentication.
+> Para o modo anônimo explícito, consulte [acesso sem login](acesso-publico.md).
+
 Esta etapa não configura serviços reais nem ativa produção. O padrão continua
 `APP_AMBIENTE=local` e `FIRESTORE_MODO=emulador`. As configurações abaixo são para
 uma implantação futura autorizada. Console, permissões IAM, regras e dados reais
@@ -13,10 +17,10 @@ separados por vírgulas, sem curingas. E-mail, domínio e claims enviados pelo
 cliente não concedem autorização. Todos os administradores permitidos têm acesso
 aos dados da aplicação; não existe isolamento por escola ou usuário.
 
-O frontend usa a API REST `signInWithPassword` e a renovação de tokens. Para esse
-fluxo, a única configuração Firebase necessária no navegador é `FIREBASE_API_KEY`,
-a chave Web pública do mesmo projeto. Não são necessários `authDomain`, `appId`
-ou credenciais Admin. Não há cadastro na interface; isso não significa que a
+O frontend usa o Firebase Authentication Web SDK para login e renovação. A
+configuração pública inclui `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`,
+`FIREBASE_PROJECT_ID` e `FIREBASE_APP_ID` do mesmo projeto. Não há credenciais
+Admin ou cadastro na interface; isso não significa que a
 criação de contas esteja desabilitada no serviço. Contas fora de `ADMIN_UIDS`
 continuam sem acesso ao backend.
 
@@ -73,16 +77,17 @@ silenciosamente para outro banco. O contexto fecha cliente e aplicação Firebas
 ## Frontend na Vercel
 
 Usar `Frontend` como Root Directory. Em `Frontend/js/config.mjs`, configurar
-`API_BASE_URL` com a origem HTTPS da API Render e `FIREBASE_API_KEY` com a chave
-Web pública. São valores entregues ao navegador; variáveis da Vercel não são
+`API_BASE_URL` com a origem HTTPS da API Render e os quatro valores públicos do
+aplicativo Web Firebase. São valores entregues ao navegador; variáveis da Vercel não são
 injetadas automaticamente nesses arquivos estáticos. Não inserir conta de
 serviço, chave privada, tokens ou `INTEGRIDADE_CHAVE` no frontend.
 
 A chave Web identifica o projeto e não substitui autenticação/autorização.
 Revisar suas restrições de APIs e de origem conforme o suporte dos endpoints
 Identity Toolkit e Secure Token; validar login e renovação antes de restringir.
-Tokens ficam em memória, sem armazenamento persistente. Atualizar a página exige
-novo login. Falhas de conexão são tratadas, 401/403 encerram a sessão e respostas
+O SDK gerencia a persistência LOCAL; atualizar a página exige nova confirmação
+do backend, sem expor o dashboard antes dela. Falhas de conexão são tratadas,
+401/403 encerram a sessão e respostas
 503 não apagam automaticamente uma sessão válida. Ver [Vercel](vercel-frontend.md).
 
 ## Testes seguros

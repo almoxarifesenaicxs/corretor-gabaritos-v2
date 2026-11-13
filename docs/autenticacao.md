@@ -1,7 +1,10 @@
 # Autenticação e autorização — Etapa 08
 
-O frontend usa login por e-mail/senha do Firebase Authentication por sua API REST
-oficial. O backend usa o Firebase Admin SDK já instalado. Nenhuma dependência nova
+> O modo `APP_AMBIENTE=producao` exige Firebase Authentication e `ADMIN_UIDS`.
+> A Vercel exibe login; o modo `local_operacional` mantém acesso local sem login.
+
+O frontend usa o Firebase Authentication Web SDK por módulos CDN fixados.
+O backend usa o Firebase Admin SDK já instalado. Nenhuma dependência nova
 ou framework frontend é necessário. Não foi configurado nem acessado um projeto
 Firebase real durante a implementação.
 
@@ -44,8 +47,9 @@ configurado causa rejeição, evitando aceitar tokens sem assinatura por engano.
    `GOOGLE_APPLICATION_CREDENTIALS` deve apontar para arquivo privado fora do
    repositório. A identidade precisa poder consultar usuários Firebase Auth para
    verificar revogação/desativação. Conceder apenas as permissões necessárias.
-6. Em `Frontend/js/config.mjs`, preencher `FIREBASE_API_KEY` com a chave pública
-   Web do mesmo projeto. Esta chave identifica o projeto; não concede acesso
+6. Em `Frontend/js/config.mjs`, preencher os quatro valores públicos
+   `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID` e
+   `FIREBASE_APP_ID` do mesmo projeto. Eles não concedem acesso
    administrativo. Nunca inserir conta de serviço, senha, ID Token ou refresh
    token nesse arquivo. Configurar restrições da chave compatíveis com Firebase
    Auth e Secure Token API e validar o login no domínio local usado.
@@ -71,9 +75,10 @@ A tela de login aparece antes de carregar os fluxos de negócio. Após entrar no
 Firebase, o frontend consulta `/api/auth/me`; somente um administrador autorizado
 acessa a interface. A senha é limpa do formulário ao terminar a tentativa.
 
-ID Token e refresh token ficam apenas em memória, nunca em localStorage,
-sessionStorage, cookies, URLs da aplicação ou logs. Recarregar a página exige
-novo login. Tokens próximos de expirar são renovados pela Secure Token API.
+O SDK gerencia a persistência LOCAL, inclusive o refresh token. O aplicativo não
+armazena tokens manualmente nem os coloca em URLs ou logs. Recarregar a página
+restaura a sessão, mas exige nova autorização em `/api/auth/me`. Tokens próximos
+de expirar são renovados pelo SDK.
 Requisições protegidas recebem `Authorization: Bearer ...`; multipart preserva
 o Content-Type/boundary gerado pelo navegador. Redirecionamentos da API não são
 seguidos. Respostas 401/403 encerram a sessão, sem repetir gravações automaticamente.

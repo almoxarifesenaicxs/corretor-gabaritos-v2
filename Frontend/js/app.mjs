@@ -1,17 +1,15 @@
 import { loadPages } from "./paginas.mjs";
 import { requireLogin } from "./login.mjs";
-import { isApiAccessAllowed } from "./api.mjs";
 
 const navigation = [...document.querySelectorAll("[data-tab]")];
 navigation.forEach((button) => {
   button.disabled = true;
 });
 try {
+  document.body.inert = false;
   await requireLogin();
   await loadPages();
-  if (!isApiAccessAllowed()) throw new Error("Sessão encerrada durante a inicialização.");
   await import("./layout.mjs");
-  if (!isApiAccessAllowed()) throw new Error("Sessão encerrada durante a inicialização.");
   await import("./fluxo-captura.mjs");
 } catch {
   const message = document.getElementById("message");

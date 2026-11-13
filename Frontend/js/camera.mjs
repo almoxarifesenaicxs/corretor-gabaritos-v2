@@ -10,13 +10,11 @@ export function frameBlob(video, maxSize = 1920) {
   canvas.height = Math.round(video.videoHeight * scale);
   canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) =>
-    canvas.toBlob(
-      (blob) =>
-        blob
-          ? resolve(blob)
-          : reject(new Error("Não foi possível capturar a imagem.")),
-      "image/png",
-    ),
+    canvas.toBlob((blob) => {
+      canvas.width = canvas.height = 0;
+      if (blob) resolve(blob);
+      else reject(new Error("Não foi possível capturar a imagem."));
+    }, "image/png"),
   );
 }
 
@@ -26,7 +24,7 @@ export function cameraError(error) {
       NotAllowedError:
         "Permissão da câmera negada. Libere o acesso no navegador ou envie um arquivo.",
       NotFoundError:
-        "Nenhuma câmera foi encontrada. Conecte a webcam ou envie um arquivo.",
+        "Nenhuma câmera foi encontrada. Conecte uma câmera ou envie um arquivo.",
       NotReadableError:
         "A câmera está ocupada ou indisponível. Feche outros aplicativos.",
       OverconstrainedError:
@@ -64,12 +62,14 @@ export class Camera {
     const generation = this.generation;
     if (!this.mediaDevices?.getUserMedia)
       throw new Error(
-        "Webcam exige HTTPS ou localhost e navegador compatível.",
+        "Câmera exige HTTPS ou localhost e navegador compatível.",
       );
     const stream = await this.mediaDevices.getUserMedia({
       audio: false,
       video: {
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        ...(deviceId
+          ? { deviceId: { exact: deviceId } }
+          : { facingMode: { ideal: "environment" } }),
         width: { ideal: 1920 },
         height: { ideal: 1080 },
       },
@@ -80,17 +80,30 @@ export class Camera {
     }
     this.stream = stream;
     this.video.srcObject = stream;
-    try {
-      await this.video.play();
-    } catch (error) {
-      this.stop();
-      throw error;
-    }
-    if (generation !== this.generation) return false;
     for (const track of stream.getTracks()) {
       track.addEventListener?.("ended", () => {
-        if (generation === this.generation) this.stop();
+        if (generation !== this.generation) return;
+        this.stop();
+        this.onState({ estado: "vermelho", cantos: [],
+          mensagem: "Câmera desconectada. Reconecte-a ou envie um arquivo." });
       });
+    }
+    let cancelPlayback;
+    const cancelled = new Promise(resolve => {
+      cancelPlayback = () => resolve(false);
+    });
+    this.cancelPlayback = cancelPlayback;
+    try {
+      const played = await Promise.race([
+        Promise.resolve().then(() => this.video.play()).then(() => true), cancelled,
+      ]);
+      if (!played || generation !== this.generation) return false;
+    } catch (error) {
+      if (generation !== this.generation) return false;
+      this.stop();
+      throw error;
+    } finally {
+      if (this.cancelPlayback === cancelPlayback) this.cancelPlayback = null;
     }
     this.timer = this.schedule(() => this.tick(generation), 500);
     return true;
@@ -102,13 +115,16 @@ export class Camera {
   }
   async tick(generation) {
     if (!this.stream || generation !== this.generation) return;
-    this.controller = new AbortController();
+    const controller = new AbortController();
+    this.controller = controller;
+    let nextDelay = 3000;
     try {
       const blob = await this.snapshot(this.video, 800);
       if (generation !== this.generation) return;
-      const data = await this.analyze(blob, this.controller.signal);
+      const data = await this.analyze(blob, controller.signal);
       if (generation === this.generation) this.onState(data);
     } catch (error) {
+      nextDelay = error.message === "Aguarde a imagem da câmera." ? 1000 : 5000;
       if (generation === this.generation)
         this.onState({
           estado: "vermelho",
@@ -116,18 +132,25 @@ export class Camera {
           mensagem: `Enquadramento não validado: ${error.message}`,
         });
     } finally {
+      if (this.controller === controller) this.controller = null;
       if (this.stream && generation === this.generation)
-        this.timer = this.schedule(() => this.tick(generation), 1200);
+        this.timer = this.schedule(() => this.tick(generation), nextDelay);
     }
   }
   async capture() {
     if (!this.stream) throw new Error("Ative a câmera antes de fotografar.");
-    return this.snapshot(this.video);
+    const generation = this.generation;
+    const blob = await this.snapshot(this.video);
+    if (generation !== this.generation) throw new DOMException("Captura encerrada.", "AbortError");
+    return blob;
   }
   stop() {
     this.generation += 1;
     this.cancel(this.timer);
+    this.cancelPlayback?.();
+    this.cancelPlayback = null;
     this.controller?.abort();
+    this.controller = null;
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
     this.video.srcObject = null;

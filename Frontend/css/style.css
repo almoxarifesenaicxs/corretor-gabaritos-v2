@@ -23,12 +23,6 @@
   font-family: "Manrope", "Segoe UI", Arial, sans-serif;
   font-synthesis: none;
 }
-.login-required > :not(#login-panel) { display: none !important; }
-#login-panel [hidden] { display: none !important; }
-#login-panel { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.login-card { width: min(100%, 420px); display: grid; gap: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 32px; }
-.login-card button { background: var(--blue); color: var(--text); }
-.login-card p { color: var(--muted); }
 * {
   box-sizing: border-box;
 }
@@ -39,6 +33,12 @@ body {
   font-size: 14px;
   line-height: 1.5;
 }
+.login-required > :not(#login-panel) { display: none !important; }
+#login-panel[hidden], #login-panel [hidden] { display: none !important; }
+#login-panel { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.login-card { width: min(100%, 420px); display: grid; gap: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 32px; }
+.login-card button { background: var(--blue); color: var(--text); }
+.login-card p { color: var(--muted); }
 button,
 input,
 select {
@@ -356,6 +356,30 @@ main {
   flex: 1;
   min-width: 0;
 }
+#correction-fields > .setup-card {
+  flex-wrap: wrap;
+}
+#recovery-panel {
+  flex: 0 0 100%;
+}
+#correction-fields[hidden] ~ #event-panels {
+  display: none;
+}
+#event-panels {
+  margin-top: var(--space);
+}
+.operation-panel {
+  padding: var(--space);
+  margin-bottom: var(--space);
+  background: var(--panel);
+}
+.operation-panel h3 {
+  margin-top: 0;
+}
+#export-panel button {
+  margin-top: 10px;
+  margin-right: 8px;
+}
 .setup-note {
   color: #aebbd0;
   font-size: 11px;
@@ -547,6 +571,33 @@ main {
   font-size: 10px;
   color: #a0aec4;
 }
+.mobile-photo-choice {
+  display: none;
+  position: relative;
+  text-align: center;
+  padding: 12px;
+  border: 1px dashed #2d3a50;
+  border-radius: 8px;
+}
+.mobile-photo-choice input.sr-only { left: 0; top: 0; }
+.mobile-photo-choice small {
+  display: block;
+  margin-top: 7px;
+  color: #a0aec4;
+}
+.photo-review {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #2d3a50;
+  border-radius: 8px;
+}
+.photo-review[hidden] { display: none; }
+.photo-review p { margin-bottom: 10px; }
+.photo-review button { min-height: 44px; margin: 4px; }
+.batch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.batch-actions button { min-height: 40px; }
+#batch-file { display: block; max-width: 100%; margin: 8px 0; }
+#batch-errors { max-height: 180px; overflow: auto; }
 .wide {
   width: 100%;
   display: flex;
@@ -846,6 +897,9 @@ footer {
     gap: 13px;
     flex-wrap: wrap;
   }
+  .operation-panel {
+    padding: 16px;
+  }
   .setup-card .grow {
     min-width: min(200px, 100%);
   }
@@ -877,7 +931,11 @@ footer {
   }
   .camera-toolbar button {
     flex: 1;
+    min-height: 44px;
   }
+  .mobile-photo-choice { display: block; }
+  .camera-stage { max-height: 65vh; }
+  .camera-empty button, .file-button, #process-button { min-height: 44px; }
   .list-card {
     padding: 17px;
   }
