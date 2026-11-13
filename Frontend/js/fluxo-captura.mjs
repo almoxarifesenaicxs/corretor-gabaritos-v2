@@ -16,7 +16,7 @@ import {
   requestBinary,
 } from "./api.mjs";
 import { Lote } from "./lote.mjs";
-import { Camera, cameraError } from "./camera.mjs";
+import { Camera, cameraError, validCorners } from "./camera.mjs";
 import { StudentNameReader } from "./nome-aluno.mjs";
 import { Students } from "./alunos.mjs";
 import { VisualCorrection } from "./correcao-visual.mjs";
@@ -28,6 +28,9 @@ let tab = "avaliacoes",
   sourceIsCapture = false,
   photoConfirmed = true,
   previewUrl = null;
+let cornerPoints = null,
+  approvedCorners = null,
+  lastDetectedCorners = null;
 let result = null,
   resultContext = null,
   evaluations = [],
@@ -498,6 +501,8 @@ function updateButtons() {
     $("file-input"),
     $("mobile-camera-input"),
     $("capture-button"),
+    $("confirm-photo"),
+    $("edit-corners"),
     $("camera-select"),
     $("student-link-select"),
   ]) {
@@ -534,6 +539,77 @@ function showOverlay(visible) {
   $("camera-overlay").toggleAttribute("hidden", !visible);
 }
 
+function imageDisplayRect() {
+  const stage = $("camera-stage").getBoundingClientRect();
+  const image = $("capture-preview");
+  if (!stage.width || !stage.height || !image.naturalWidth || !image.naturalHeight) return null;
+  const scale = Math.min(stage.width / image.naturalWidth, stage.height / image.naturalHeight);
+  const width = image.naturalWidth * scale, height = image.naturalHeight * scale;
+  return { stage, x: (stage.width - width) / 2, y: (stage.height - height) / 2,
+    width, height };
+}
+
+function renderCornerEditor() {
+  if (!cornerPoints || $("manual-corners").hidden) return;
+  const rect = imageDisplayRect();
+  if (!rect) return;
+  const outline = $("manual-corners-outline");
+  outline.setAttribute("viewBox", `0 0 ${rect.stage.width} ${rect.stage.height}`);
+  outline.querySelector("polygon").setAttribute("points", cornerPoints.map(([x, y]) =>
+    `${rect.x + x * rect.width},${rect.y + y * rect.height}`).join(" "));
+  $("manual-corners").querySelectorAll(".corner-handle").forEach((handle, i) => {
+    handle.style.left = `${rect.x + cornerPoints[i][0] * rect.width}px`;
+    handle.style.top = `${rect.y + cornerPoints[i][1] * rect.height}px`;
+  });
+}
+
+function moveCorner(index, clientX, clientY) {
+  const rect = imageDisplayRect();
+  if (!rect || !cornerPoints || busy) return;
+  const clamp = value => Math.max(0, Math.min(1, value));
+  cornerPoints[index] = [
+    clamp((clientX - rect.stage.left - rect.x) / rect.width),
+    clamp((clientY - rect.stage.top - rect.y) / rect.height),
+  ];
+  approvedCorners = null;
+  photoConfirmed = false;
+  updateButtons();
+  renderCornerEditor();
+}
+
+$("manual-corners").querySelectorAll(".corner-handle").forEach(handle => {
+  const index = Number(handle.dataset.corner);
+  handle.addEventListener("pointerdown", event => {
+    if (busy) return;
+    handle.setPointerCapture(event.pointerId);
+    moveCorner(index, event.clientX, event.clientY);
+  });
+  handle.addEventListener("pointermove", event => {
+    if (handle.hasPointerCapture(event.pointerId)) moveCorner(index, event.clientX, event.clientY);
+  });
+  handle.addEventListener("keydown", event => {
+    const step = event.shiftKey ? 0.02 : 0.005;
+    const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+      ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+    if (!delta || busy || !cornerPoints) return;
+    event.preventDefault();
+    cornerPoints[index] = cornerPoints[index].map((value, axis) =>
+      Math.max(0, Math.min(1, value + delta[axis])));
+    approvedCorners = null;
+    photoConfirmed = false;
+    updateButtons();
+    renderCornerEditor();
+  });
+});
+$("capture-preview").addEventListener("load", () => {
+  if (sourceIsCapture) {
+    const image = $("capture-preview");
+    $("camera-stage").style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`;
+  }
+  renderCornerEditor();
+});
+window.addEventListener("resize", renderCornerEditor);
+
 function positionGuide() {
   const video = $("camera-video");
   const stage = $("camera-stage");
@@ -569,6 +645,8 @@ function positionGuide() {
 
 function showCameraState(data) {
   state = data.estado;
+  if (camera?.stream && data.cantos?.length === 4 && validCorners(data.cantos))
+    lastDetectedCorners = data.cantos.map(point => [...point]);
   if (data.mensagem?.startsWith("Câmera desconectada")) message(data.mensagem, true);
   $("camera-stage").dataset.state = state;
   $("frame-status").className = `frame-status ${state}`;
@@ -683,6 +761,11 @@ function clearSource() {
   source = null;
   sourceIsCapture = false;
   photoConfirmed = true;
+  cornerPoints = null;
+  approvedCorners = null;
+  $("manual-corners").hidden = true;
+  $("edit-corners").hidden = true;
+  $("camera-stage").style.aspectRatio = "";
   $("photo-review").hidden = true;
   $("capture-preview").removeAttribute("src");
   $("capture-preview").hidden = true;
@@ -697,10 +780,14 @@ function setSource(file, fromCamera = false, fromBatch = false) {
   if (lote && lote.atual !== null && !fromBatch)
     throw new Error("Conclua, repita ou cancele a imagem atual do lote antes de trocar a origem.");
   validateFile(file);
+  const suggested = fromCamera && camera.stream ? lastDetectedCorners : null;
   clearSource();
   source = file;
   sourceIsCapture = fromCamera;
   photoConfirmed = !fromCamera;
+  if (fromCamera) cornerPoints = suggested?.map(point => [...point]) ||
+    [[0.12, 0.10], [0.88, 0.10], [0.88, 0.90], [0.12, 0.90]];
+  $("manual-corners").hidden = !fromCamera;
   $("photo-review").hidden = !fromCamera;
   stopCamera();
   invalidateResult();
@@ -714,6 +801,7 @@ function setSource(file, fromCamera = false, fromBatch = false) {
     $("capture-preview").src = previewUrl;
     $("capture-preview").hidden = false;
     $("camera-empty").hidden = true;
+    renderCornerEditor();
   }
   $("camera-start").textContent = "Ativar câmera";
   // Nova captura permanece disponível mesmo com a prévia ocupando o palco.
@@ -726,12 +814,31 @@ function setSource(file, fromCamera = false, fromBatch = false) {
 
 $("confirm-photo").addEventListener("click", () => {
   if (!source || !sourceIsCapture || busy) return;
+  if (!validCorners(cornerPoints)) {
+    message("Ajuste os quatro cantos da folha sem cruzar os lados e incluindo a folha inteira.", true);
+    return;
+  }
+  approvedCorners = cornerPoints.map(point => [...point]);
   photoConfirmed = true;
   $("photo-review").hidden = true;
+  $("manual-corners").hidden = true;
+  $("edit-corners").hidden = false;
   $("source-badge").textContent = "Foto confirmada";
   updateButtons();
   if (tab === "correcao") nameReader.read(source, { captura: true });
   message("Foto confirmada. Reconheça e revise as 50 respostas antes de salvar.");
+});
+$("edit-corners").addEventListener("click", () => {
+  if (!source || !sourceIsCapture || busy) return;
+  photoConfirmed = false;
+  approvedCorners = null;
+  $("photo-review").hidden = false;
+  $("manual-corners").hidden = false;
+  $("edit-corners").hidden = true;
+  invalidateResult();
+  renderCornerEditor();
+  updateButtons();
+  message("Ajuste os cantos e confirme novamente antes de reconhecer.");
 });
 $("discard-photo").addEventListener("click", () => {
   if (busy) return;
@@ -754,6 +861,7 @@ async function startCamera() {
     updateButtons();
   }
   const requestId = ++cameraRequest;
+  lastDetectedCorners = null;
   cameraStarting = true;
   videoReadyCleanup?.();
   videoReadyCleanup = null;
@@ -1017,6 +1125,7 @@ $("process-button").addEventListener("click", async () => {
     if (tab === "avaliacoes") {
       const recognized = await upload("/api/gabaritos/reconhecer", source, {
         captura: sourceIsCapture,
+        ...(approvedCorners ? { cantos: JSON.stringify(approvedCorners) } : {}),
       });
       if (generation === processGeneration && sessionCurrent(session)) {
         renderOfficial(recognized, updateButtons);
@@ -1032,6 +1141,7 @@ $("process-button").addEventListener("click", async () => {
       const data = await upload("/api/correcoes/processar", source, {
         gabarito: JSON.stringify(official.alternativas),
         captura: sourceIsCapture,
+        ...(approvedCorners ? { cantos: JSON.stringify(approvedCorners) } : {}),
         visual: true,
       });
       if (generation === processGeneration && sessionCurrent(session)) {

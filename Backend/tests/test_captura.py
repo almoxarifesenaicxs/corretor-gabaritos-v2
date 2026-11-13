@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import pytest
 
-from app.services.captura import analisar_folha, retificar_captura, decodificar_captura
+from app.services.captura import (analisar_folha, retificar_captura,
+                                  decodificar_captura, validar_cantos_manuais)
 from app.services.reconhecimento import ErroLeitura
 
 
@@ -40,3 +41,26 @@ def test_captura_manual_sem_folha_nao_inventa_cantos():
     assert retificar_captura(dados) == dados
     with pytest.raises(ErroLeitura):
         decodificar_captura(b"invalida")
+
+
+def test_cantos_manuais_retificam_folha_sem_enquadramento_verde():
+    pontos = [[100, 230], [500, 180], [550, 700], [110, 740]]
+    imagem = folha(pontos)
+    dados = cv2.imencode(".png", imagem)[1].tobytes()
+    assert analisar_folha(imagem)["estado"] != "verde"
+    normalizados = (np.array(pontos) / [800, 800]).tolist()
+    assert validar_cantos_manuais(normalizados).shape == (4, 2)
+    retificada = decodificar_captura(retificar_captura(dados, normalizados))
+    assert retificada.shape == (1754, 1240, 3)
+    assert np.mean(retificada[100:-100, 100:-100]) > 240
+
+
+@pytest.mark.parametrize("cantos", [
+    "não é JSON", [[0, 0]], [[0, 0], [1, 0], [0, 1], [1, 1]],
+    [[0, 0], [1, 0], [1, 1], [0, float("nan")]],
+    [[0, 0], [0.1, 0], [0.1, 0.2], [0, 0.2]],
+    [[0, 0], [1.1, 0], [1, 1], [0, 1]],
+])
+def test_cantos_manuais_invalidos_sao_rejeitados(cantos):
+    with pytest.raises(ErroLeitura, match="Cantos manuais inválidos"):
+        validar_cantos_manuais(cantos)

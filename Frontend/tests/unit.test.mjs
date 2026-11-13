@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Camera, cameraError, frameBlob } from "../js/camera.mjs";
+import { Camera, cameraError, frameBlob, validCorners } from "../js/camera.mjs";
 import { validateFile, officialFromSelections, request } from "../js/api.mjs";
 import { authSession } from "../js/auth.mjs";
 
@@ -218,6 +218,18 @@ test("contexto sem câmera oferece mensagem clara", async () => {
   assert.match(cameraError({ name: "NotAllowedError" }), /Permissão/);
   assert.match(cameraError({ name: "NotFoundError" }), /Nenhuma câmera/);
   assert.match(cameraError({ name: "NotReadableError" }), /ocupada/);
+});
+
+test("quatro cantos manuais aceitam perspectiva e rejeitam recorte inválido", () => {
+  assert.equal(validCorners([[0.14, 0.18], [0.46, 0.20],
+    [0.45, 0.52], [0.13, 0.50]]), true);
+  assert.equal(validCorners([[0.15, 0.15], [0.75, 0.15],
+    [0.75, 0.85], [0.15, 0.85]]), true);
+  for (const corners of [
+    [[0.1, 0.1], [0.9, 0.9], [0.9, 0.1], [0.1, 0.9]],
+    [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2], [0.1, 0.2]],
+    [[0.1, 0.1], [1.2, 0.1], [0.9, 0.9], [0.1, 0.9]],
+  ]) assert.equal(validCorners(corners), false);
 });
 
 test("valida formato e tamanho antes de enviar", () => {

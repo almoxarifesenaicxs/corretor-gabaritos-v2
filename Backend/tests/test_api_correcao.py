@@ -12,6 +12,7 @@ from app.routes import correcoes
 from app.services.correcao import corrigir_respostas
 from app.services.reconhecimento import ErroLeitura, reconhecer_imagem
 from test_reconhecimento import cartao
+from test_fotos_cartoes import _grade_sintetica
 
 client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 URL = "/api/correcoes/processar"
@@ -101,6 +102,25 @@ def test_diagnostico_da_captura_registra_so_metadados(caplog):
     assert "processado_px=600x500" in caplog.text
     assert "etapa=grade_circular" in caplog.text
     assert "aluno-privado" not in caplog.text
+
+
+def test_http_captura_assistida_reconhece_margens_grandes_sem_salvar():
+    pagina = cv2.resize(_grade_sintetica(), (500, 707), interpolation=cv2.INTER_AREA)
+    foto = np.full((2600, 2200, 3), 55, np.uint8)
+    foto[450:1157, 250:750] = pagina
+    dados = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+    cantos = [[250 / 2200, 450 / 2600], [749 / 2200, 450 / 2600],
+              [749 / 2200, 1156 / 2600], [250 / 2200, 1156 / 2600]]
+    response = client.post(URL, files={"arquivo": ("captura.jpg", dados, "image/jpeg")},
+        data={"gabarito": json.dumps(OFICIAL), "captura": "true", "visual": "true",
+              "cantos": json.dumps(cantos)})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["respostas"]) == 50
+    assert [body["respostas"][str(n)]["resposta"] for n in range(1, 51)] == list("ABCDE" * 10)
+    assert len(body["visualizacao"]["posicoes"]) == 50
+    assert client.post(URL, files={"arquivo": ("captura.jpg", dados, "image/jpeg")},
+        data={"gabarito": json.dumps(OFICIAL), "cantos": json.dumps(cantos)}).status_code == 422
 
 
 @pytest.mark.parametrize("mensagem,codigo", [

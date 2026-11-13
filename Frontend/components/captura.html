@@ -37,6 +37,13 @@
         <polygon id="detected-corners" points="" />
         <path class="guide-corners" d="" />
       </svg>
+      <div id="manual-corners" class="manual-corners" hidden>
+        <svg id="manual-corners-outline" aria-hidden="true"><polygon points="" /></svg>
+        <button type="button" class="corner-handle" data-corner="0" aria-label="Canto superior esquerdo"></button>
+        <button type="button" class="corner-handle" data-corner="1" aria-label="Canto superior direito"></button>
+        <button type="button" class="corner-handle" data-corner="2" aria-label="Canto inferior direito"></button>
+        <button type="button" class="corner-handle" data-corner="3" aria-label="Canto inferior esquerdo"></button>
+      </div>
     </div>
     <div id="frame-status" class="frame-status vermelho" role="status" hidden>
       Enquadramento ainda não verificado
@@ -48,8 +55,8 @@
       ><button id="capture-button" class="primary" disabled>Fotografar</button>
     </div>
     <p id="capture-note" class="helper">
-      Coloque a folha inteira dentro da moldura. Ela é uma orientação visual; o
-      contorno detectado pode estar em outra posição. Use localhost ou HTTPS.
+      A cor da moldura orienta o enquadramento; não valida a grade. Fotografe
+      mesmo se ela não ficar verde e ajuste os quatro cantos depois. Use localhost ou HTTPS.
     </p>
     <div class="mobile-photo-choice">
       <label class="file-button" for="mobile-camera-input">Fotografar com a câmera do celular</label>
@@ -58,10 +65,11 @@
       <small>Se a câmera não abrir, escolha uma foto JPG/PNG pelo seletor de arquivos.</small>
     </div>
     <div id="photo-review" class="photo-review" hidden>
-      <p>Confira se as 50 questões, os quatro cantos e o nome estão legíveis. Se a foto estiver desfocada, refaça.</p>
-      <button id="confirm-photo" type="button" class="primary">Usar esta foto</button>
+      <p>Arraste cada ponto para o canto da folha. Confira nitidez, nome e as 50 questões. A grade será validada depois do envio; se a foto estiver desfocada, refaça.</p>
+      <button id="confirm-photo" type="button" class="primary">Confirmar cantos e usar foto</button>
       <button id="discard-photo" type="button" class="secondary">Descartar foto</button>
     </div>
+    <button id="edit-corners" type="button" class="secondary" hidden>Ajustar cantos novamente</button>
     <div class="file-choice">
       <span>ou selecione um arquivo</span
       ><label class="file-button" for="file-input"

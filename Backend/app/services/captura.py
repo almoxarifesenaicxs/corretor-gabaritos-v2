@@ -1,5 +1,6 @@
 """Enquadramento heurístico de folha A4 e retificação de capturas, sem OCR."""
 
+import json
 import cv2
 import numpy as np
 
@@ -67,19 +68,55 @@ def analisar_folha(imagem, *, area_minima=0.15):
             "cantos": [], "folha_visivel": False}
 
 
-def retificar_captura(conteudo):
-    """Corrige somente folha visível; sem detecção mantém a captura manual."""
+def validar_cantos_manuais(cantos):
+    """Valida TL, TR, BR, BL normalizados sem presumir que a grade é legível."""
+    if isinstance(cantos, str):
+        if len(cantos) > 256:
+            raise ErroLeitura("Cantos manuais inválidos.")
+        try:
+            cantos = json.loads(cantos)
+        except (TypeError, ValueError) as erro:
+            raise ErroLeitura("Cantos manuais inválidos.") from erro
+    try:
+        pontos = np.asarray(cantos, dtype=np.float32)
+    except (TypeError, ValueError) as erro:
+        raise ErroLeitura("Cantos manuais inválidos.") from erro
+    if (pontos.shape != (4, 2) or not np.all(np.isfinite(pontos))
+            or np.any(pontos < 0) or np.any(pontos > 1)
+            or not cv2.isContourConvex(pontos.reshape(-1, 1, 2))
+            or cv2.contourArea(pontos) < 0.05):
+        raise ErroLeitura("Cantos manuais inválidos.")
+    topo = np.linalg.norm(pontos[1] - pontos[0])
+    base = np.linalg.norm(pontos[2] - pontos[3])
+    esquerda = np.linalg.norm(pontos[3] - pontos[0])
+    direita = np.linalg.norm(pontos[2] - pontos[1])
+    largura = max(topo, base)
+    altura = max(esquerda, direita)
+    if (not 0.40 <= largura / altura <= 1.05
+            or pontos[0, 0] >= pontos[1, 0]
+            or pontos[3, 0] >= pontos[2, 0]
+            or pontos[0, 1] >= pontos[3, 1]
+            or pontos[1, 1] >= pontos[2, 1]):
+        raise ErroLeitura("Cantos manuais inválidos.")
+    return pontos
+
+
+def retificar_captura(conteudo, cantos=None):
+    """Aplica cantos escolhidos ou, na ausência deles, usa detecção opcional."""
     imagem = decodificar_captura(conteudo)
-    analise = analisar_folha(imagem)
-    if not analise["folha_visivel"]:
-        return conteudo
+    if cantos is None:
+        analise = analisar_folha(imagem)
+        if not analise["folha_visivel"]:
+            return conteudo
+        # Uma tabela lateral pode parecer uma folha; só aceitar candidato central.
+        centro = np.mean(analise["cantos"], axis=0)
+        if np.any(abs(centro - 0.5) >= 0.12):
+            return conteudo
+        pontos = np.float32(analise["cantos"])
+    else:
+        pontos = validar_cantos_manuais(cantos)
     h, w = imagem.shape[:2]
-    # Uma tabela de respostas lateral pode parecer uma folha, mas cortaria
-    # o cabeçalho/nome. Retificar somente um candidato centralizado.
-    centro = np.mean(analise["cantos"], axis=0)
-    if np.any(abs(centro - 0.5) >= 0.12):
-        return conteudo
-    origem = np.float32(analise["cantos"]) * [w, h]
+    origem = pontos * np.float32([w, h])
     # A4 retrato observado nos PDFs; evita deformar a proporção do modelo.
     largura, altura = 1240, 1754
     destino = np.float32([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]])

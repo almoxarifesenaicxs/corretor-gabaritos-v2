@@ -89,10 +89,13 @@ def processar(
     gabarito: Annotated[str, Form(description='JSON com as chaves "1" a "50" e alternativas A–E.')],
     captura: Annotated[bool, Form()] = False,
     visual: Annotated[bool, Form()] = False,
+    cantos: Annotated[str | None, Form()] = None,
 ) -> dict:
     # Rota síncrona: FastAPI executa I/O e OpenCV no pool de threads.
     try:
         conteudo, extensao = ler_upload(arquivo, LIMITE_UPLOAD)
+        if cantos is not None and not captura:
+            raise HTTPException(422, "Ajuste de cantos exige uma captura de imagem.")
         bytes_entrada = len(conteudo)
         dimensoes_entrada = _dimensoes_cabecalho(conteudo) if extensao != ".pdf" else (0, 0)
         try:
@@ -108,7 +111,7 @@ def processar(
                 if extensao == ".pdf":
                     raise HTTPException(422, "Captura de câmera deve ser JPG ou PNG.")
                 try:
-                    conteudo = retificar_captura(conteudo)
+                    conteudo = retificar_captura(conteudo, cantos)
                 except ErroLeitura:
                     logger.warning("cartao_rejeitado etapa=retificacao tipo=%s bytes=%d entrada_px=%dx%d",
                                    extensao, bytes_entrada, *dimensoes_entrada)

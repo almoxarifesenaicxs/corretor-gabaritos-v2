@@ -234,9 +234,31 @@ test("captura móvel exige conferência, suporta orientação e descarta foto", 
     await input.setInputFiles(path.join(artifacts, "cartao.png"));
     assert.equal(await page.locator("#photo-review").isVisible(), true);
     assert.equal(await page.locator("#process-button").isDisabled(), true);
+    await page.locator("#manual-corners .corner-handle").first().waitFor({ state: "visible" });
+    const before = await page.locator("#manual-corners-outline polygon").getAttribute("points");
+    await page.locator("#manual-corners .corner-handle").first().press("ArrowRight");
+    const after = await page.locator("#manual-corners-outline polygon").getAttribute("points");
+    assert.notEqual(after, before);
     await page.locator("#confirm-photo").click();
     assert.equal(await page.locator("#photo-review").isHidden(), true);
     assert.equal(await page.locator("#process-button").isEnabled(), true);
+    await page.locator("#edit-corners").click();
+    assert.equal(await page.locator("#process-button").isDisabled(), true);
+    await page.locator("#confirm-photo").click();
+    assert.equal(await page.locator("#process-button").isEnabled(), true);
+    let submittedCorners = false;
+    await page.route("**/api/gabaritos/reconhecer", route => {
+      const body = route.request().postDataBuffer().toString("latin1");
+      submittedCorners = /name="cantos"/.test(body) && /name="captura"/.test(body);
+      return route.fulfill({ json: Object.fromEntries(
+        Array.from({ length: 50 }, (_, i) => [String(i + 1),
+          { estado: "marcada", resposta: "A", alternativas: ["A"] }])) });
+    });
+    const uploaded = page.waitForResponse(response =>
+      response.url().includes("/api/gabaritos/reconhecer"));
+    await page.locator("#process-button").click();
+    await uploaded;
+    assert.equal(submittedCorners, true);
     await page.setViewportSize({ width: 844, height: 390 });
     assert.equal(await page.locator("#capture-preview").isVisible(), true);
     assert.equal(await page.locator("#camera-stage").evaluate(el =>
@@ -1400,11 +1422,23 @@ test("fluxos de avaliações e correções com câmera e API simuladas", async (
     );
     await page.locator("#capture-button").click();
     await page.locator("#capture-preview").waitFor({ state: "visible" });
+    await page.locator("#manual-corners .corner-handle").first().waitFor({ state: "visible" });
+    assert.equal(await page.locator("#process-button").isDisabled(), true);
+    const desktopBefore = await page.locator("#manual-corners-outline polygon").getAttribute("points");
+    const handleBox = await page.locator("#manual-corners .corner-handle").first().boundingBox();
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 8,
+      handleBox.y + handleBox.height / 2 + 8);
+    await page.mouse.up();
+    assert.notEqual(await page.locator("#manual-corners-outline polygon").getAttribute("points"), desktopBefore);
+    await page.locator("#confirm-photo").click();
+    assert.equal(await page.locator("#process-button").isEnabled(), true);
     assert.equal(
       await page.locator("#camera-video").evaluate((video) => video.srcObject),
       null,
     );
-    assert.match(await page.locator("#message").textContent(), /Captura/);
+    assert.match(await page.locator("#message").textContent(), /Foto confirmada/);
     await page
       .locator("#file-input")
       .setInputFiles(path.join(artifacts, "cartao.png"));

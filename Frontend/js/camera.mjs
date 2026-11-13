@@ -18,6 +18,26 @@ export function frameBlob(video, maxSize = 2560) {
   );
 }
 
+export function validCorners(points) {
+  if (!Array.isArray(points) || points.length !== 4 ||
+      points.some(point => !Array.isArray(point) || point.length !== 2 ||
+        point.some(value => !Number.isFinite(value) || value < 0 || value > 1))) return false;
+  const cross = (a, b, c) =>
+    (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+  if (points.some((_, i) => cross(points[i], points[(i + 1) % 4], points[(i + 2) % 4]) <= 0))
+    return false;
+  const area = Math.abs(points.reduce((sum, point, i) => {
+    const next = points[(i + 1) % 4];
+    return sum + point[0] * next[1] - next[0] * point[1];
+  }, 0)) / 2;
+  const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const width = Math.max(distance(points[0], points[1]), distance(points[2], points[3]));
+  const height = Math.max(distance(points[0], points[3]), distance(points[1], points[2]));
+  return area >= 0.05 && width / height >= 0.40 && width / height <= 1.05 &&
+    points[0][0] < points[1][0] && points[3][0] < points[2][0] &&
+    points[0][1] < points[3][1] && points[1][1] < points[2][1];
+}
+
 export function cameraError(error) {
   return (
     {

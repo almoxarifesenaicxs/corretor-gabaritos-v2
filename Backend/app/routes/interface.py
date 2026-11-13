@@ -231,13 +231,16 @@ def exportar_resultados(repo: Repo, prova_id: str | None = None):
 
 
 @router.post("/gabaritos/reconhecer")
-def reconhecer_gabarito(arquivo: Annotated[UploadFile, File()], captura: Annotated[bool, Form()] = False):
+def reconhecer_gabarito(arquivo: Annotated[UploadFile, File()], captura: Annotated[bool, Form()] = False,
+                        cantos: Annotated[str | None, Form()] = None):
     try:
         conteudo, extensao = ler_upload(arquivo, LIMITE_UPLOAD)
+        if cantos is not None and not captura:
+            raise HTTPException(422, "Ajuste de cantos exige uma captura de imagem.")
         if captura:
             if extensao == ".pdf":
                 raise HTTPException(422, "Captura de câmera deve ser JPG ou PNG.")
-            conteudo, extensao = retificar_captura(conteudo), ".png"
+            conteudo, extensao = retificar_captura(conteudo, cantos), ".png"
         with TemporaryDirectory(prefix="gabarito-") as temporario:
             caminho = Path(temporario) / f"cartao{extensao}"
             caminho.write_bytes(conteudo)

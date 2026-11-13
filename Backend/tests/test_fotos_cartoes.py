@@ -92,6 +92,44 @@ def test_folha_pequena_demais_nao_inventa_respostas():
         reconhecer_imagem(foto)
 
 
+def test_captura_assistida_recupera_grade_com_margens_grandes():
+    """O enquadramento automático rejeita; os cantos manuais preservam 50 X."""
+    pagina = cv2.resize(_grade_sintetica(), (500, 707), interpolation=cv2.INTER_AREA)
+    foto = np.full((2600, 2200, 3), 55, np.uint8)
+    foto[450:1157, 250:750] = pagina
+    dados = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+    automatica = cv2.imdecode(np.frombuffer(retificar_captura(dados), np.uint8), cv2.IMREAD_COLOR)
+    with pytest.raises(ErroLeitura):
+        reconhecer_imagem(automatica)
+    cantos = [[250 / 2200, 450 / 2600], [749 / 2200, 450 / 2600],
+              [749 / 2200, 1156 / 2600], [250 / 2200, 1156 / 2600]]
+    corrigida = cv2.imdecode(np.frombuffer(retificar_captura(dados, cantos), np.uint8), cv2.IMREAD_COLOR)
+    respostas = reconhecer_imagem(corrigida)
+    assert [respostas[str(n)]["resposta"] for n in range(1, 51)] == list("ABCDE" * 10)
+
+
+def test_captura_assistida_grade_inclinada_e_ondulada_nao_inventa_respostas():
+    pagina = _grade_sintetica()
+    altura, largura = pagina.shape[:2]
+    yy, xx = np.indices((altura, largura), dtype=np.float32)
+    ondulada = cv2.remap(pagina, (xx + 3*np.sin(yy/160)).astype(np.float32),
+                         (yy + 3*np.sin(xx/170)).astype(np.float32),
+                         cv2.INTER_LINEAR, borderValue=(255, 255, 255))
+    reduzida = cv2.resize(ondulada, (620, 877), interpolation=cv2.INTER_AREA)
+    destino = np.float32([[330, 400], [980, 445], [920, 1350], [300, 1300]])
+    origem = np.float32([[0, 0], [619, 0], [619, 876], [0, 876]])
+    foto = cv2.warpPerspective(reduzida, cv2.getPerspectiveTransform(origem, destino),
+                              (2200, 2600), borderValue=(55, 55, 55))
+    dados = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+    retificada = cv2.imdecode(np.frombuffer(retificar_captura(dados,
+        (destino / [2200, 2600]).tolist()), np.uint8), cv2.IMREAD_COLOR)
+    respostas = reconhecer_imagem(retificada)
+    esperado = "ABCDE" * 10
+    assert len(respostas) == 50
+    assert sum(respostas[str(n)]["resposta"] == esperado[n - 1] for n in range(1, 51)) >= 30
+    assert all(respostas[str(n)]["resposta"] in (None, esperado[n - 1]) for n in range(1, 51))
+
+
 def test_ondulacao_leve_sinaliza_incerteza_sem_trocar_alternativa():
     pagina = _grade_sintetica()
     altura, largura = pagina.shape[:2]
