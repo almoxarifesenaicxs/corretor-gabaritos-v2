@@ -4,6 +4,7 @@ import base64
 import cv2
 
 from app.services.reconhecimento import alinhar_imagem, binarizar, identificar_grade, identificar_tabelas, ErroLeitura
+from app.services.geometria_referencia import identificar_tabelas_modelo
 
 
 def classificar_questoes(respostas, gabarito):
@@ -22,7 +23,12 @@ def localizar_alternativas(imagem):
 
 def _localizar_alternativas_alinhadas(imagem):
     binaria = binarizar(imagem)
-    tabelas = identificar_tabelas(binaria)
+    try:
+        tabelas = identificar_tabelas(binaria)
+    except ErroLeitura:
+        tabelas = []
+    if not tabelas:
+        tabelas = identificar_tabelas_modelo(binaria)
     posicoes = {}
     if tabelas:
         for bloco, (xs, ys) in enumerate(tabelas):

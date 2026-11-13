@@ -8,6 +8,7 @@ import pymupdf
 import math
 
 from app.services.limites_imagem import validar_cabecalho, validar_dimensoes
+from app.services.geometria_referencia import identificar_tabelas_modelo
 
 
 class ErroLeitura(ValueError):
@@ -138,10 +139,13 @@ def _alinhar_grade(imagem: np.ndarray) -> np.ndarray:
                                   flags=cv2.INTER_LINEAR,
                                   borderValue=(255, 255, 255) if imagem.ndim == 3 else 255)
         try:
-            if len(identificar_tabelas(binarizar(alinhada))) == 2:
+            binaria = binarizar(alinhada)
+            if (len(identificar_tabelas(binaria)) == 2
+                    or len(identificar_tabelas_modelo(binaria)) == 2):
                 return alinhada
         except ErroLeitura:
-            pass
+            if len(identificar_tabelas_modelo(binarizar(alinhada))) == 2:
+                return alinhada
     return imagem
 
 
@@ -151,10 +155,13 @@ def alinhar_imagem(imagem: np.ndarray) -> np.ndarray:
     for candidata in ((folha, imagem) if folha is not imagem else (imagem,)):
         if candidata is not imagem:
             try:
-                if len(identificar_tabelas(binarizar(candidata))) == 2:
+                binaria = binarizar(candidata)
+                if (len(identificar_tabelas(binaria)) == 2
+                        or len(identificar_tabelas_modelo(binaria)) == 2):
                     return candidata
             except ErroLeitura:
-                pass
+                if len(identificar_tabelas_modelo(binarizar(candidata))) == 2:
+                    return candidata
         alinhada = _alinhar_grade(candidata)
         if alinhada is not candidata:
             return alinhada
@@ -214,13 +221,23 @@ def reconhecer_imagem(imagem: np.ndarray) -> dict[str, dict]:
         # O caminho comum de scanner mantém custo e pixels originais. Corrigir
         # inclinação somente quando a grade já falhou e há evidência de linhas.
         alinhada = alinhar_imagem(imagem)
-        if alinhada is imagem:
+        if alinhada is not imagem:
+            binaria = binarizar(alinhada)
+            try:
+                tabelas = identificar_tabelas(binaria)
+                if tabelas:
+                    return reconhecer_tabelas(binaria, tabelas)
+                linhas = identificar_grade(binaria)
+            except ErroLeitura:
+                tabelas = identificar_tabelas_modelo(binaria)
+                if tabelas:
+                    return reconhecer_tabelas(binaria, tabelas)
+                raise
+        else:
+            tabelas = identificar_tabelas_modelo(binaria)
+            if tabelas:
+                return reconhecer_tabelas(binaria, tabelas)
             raise
-        binaria = binarizar(alinhada)
-        tabelas = identificar_tabelas(binaria)
-        if tabelas:
-            return reconhecer_tabelas(binaria, tabelas)
-        linhas = identificar_grade(binaria)
     resultado = {}
     for bloco in range(2):
         for indice, linha in enumerate(linhas):
