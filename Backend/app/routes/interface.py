@@ -6,7 +6,8 @@ from tempfile import TemporaryDirectory
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from app.database.firestore import conectar_firestore, usar_emulador_configurado
@@ -20,8 +21,14 @@ from app.services.nome_aluno import ler_nome
 from app.services.correcao import corrigir_respostas
 from app.services.correcao_visual import classificar_questoes
 from app.services.integridade import assinar_respostas
+from app.services.exportacao import exportar_correcoes, LimiteExportacao, AvaliacaoInexistente
 
 router = APIRouter(prefix="/api", tags=["Interface"])
+
+
+def exigir_modo_operacional(request: Request):
+    if getattr(request.app.state, "ambiente", "local") not in {"local_operacional", "producao"}:
+        raise HTTPException(404, "Rota indisponível neste modo.")
 
 
 def exigir_acesso_local(request: Request):
@@ -49,11 +56,16 @@ def obter_persistencia(request: Request):
         emulador = usar_emulador_configurado()
     except ValueError:
         raise HTTPException(503, "Persistência indisponível. Confira FIRESTORE_MODO e a configuração do Firestore no backend.") from None
-    if getattr(request.app.state, "ambiente", "local") == "producao":
+    modo = getattr(request.app.state, "ambiente", "local")
+    if modo in {"producao", "publico"}:
         if emulador:
             raise HTTPException(503, "Emulador indisponível em produção.")
-        if not getattr(request.state, "administrador_verificado", None):
+        if modo == "producao" and not getattr(request.state, "administrador_verificado", None):
             raise HTTPException(403, "Autorização administrativa necessária.")
+    elif modo == "local_operacional":
+        if emulador:
+            raise HTTPException(503, "Emulador indisponível no modo operacional.")
+        exigir_acesso_local(request)
     elif not emulador:
         exigir_acesso_local(request)
     iniciado = False
@@ -84,6 +96,15 @@ class AvaliacaoEntrada(BaseModel):
     operacao_id: str = Field(pattern=r"^[a-fA-F0-9-]{32,36}$")
 
 
+class OrigemLote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lote_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    indice: int = Field(ge=0, le=99)
+    imagem_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    arquivo: str | None = Field(default=None, min_length=1, max_length=240)
+    pagina: int | None = Field(default=None, ge=1, le=100)
+
+
 class CorrecaoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prova_id: str = Field(min_length=1, max_length=1500)
@@ -96,6 +117,7 @@ class CorrecaoEntrada(BaseModel):
     permitir_provisorio: StrictBool = False
     aluno_id: str | None = Field(default=None, min_length=1, max_length=1500)
     novo_homonimo: StrictBool = False
+    origem_lote: OrigemLote | None = None
 
 
 class RevisaoEntrada(BaseModel):
@@ -105,7 +127,13 @@ class RevisaoEntrada(BaseModel):
 
 
 @router.get("/alunos")
-def listar_alunos(repo: Repo, busca: str = ""):
+def listar_alunos(repo: Repo, busca: str = "", pagina: bool = False,
+                  limite: int = Query(default=30, ge=1, le=100), cursor: str | None = None):
+    if pagina:
+        try:
+            return repo.listar_alunos_pagina(busca, limite=limite, cursor=cursor)
+        except ValueError:
+            raise HTTPException(422, "Cursor de alunos inválido.") from None
     return repo.listar_alunos(busca)
 
 
@@ -115,8 +143,15 @@ def correspondencias_aluno(repo: Repo, nome: str):
 
 
 @router.get("/alunos/{aluno_id}/correcoes")
-def historico_aluno(aluno_id: str, repo: Repo):
-    historico = repo.historico_aluno(aluno_id)
+def historico_aluno(aluno_id: str, repo: Repo, pagina: bool = False,
+                    limite: int = Query(default=30, ge=1, le=100), cursor: str | None = None,
+                    legadas: bool = False):
+    try:
+        historico = (repo.historico_aluno_pagina(aluno_id, limite=limite, cursor=cursor,
+                                                somente_legadas=legadas)
+                     if pagina else repo.historico_aluno(aluno_id))
+    except ValueError:
+        raise HTTPException(422, "Cursor de histórico inválido.") from None
     if historico is None:
         raise HTTPException(404, "Aluno não encontrado.")
     return historico
@@ -153,18 +188,41 @@ def consultar_gabarito(prova_id: str, repo: Repo):
 
 
 @router.post("/correcoes/salvar", status_code=201)
-def salvar_correcao(entrada: CorrecaoEntrada, repo: Repo):
+def salvar_correcao(entrada: CorrecaoEntrada, repo: Repo, request: Request):
     if not entrada.confirmado:
         raise HTTPException(422, "Confira e confirme o resultado antes de salvar.")
+    if entrada.origem_lote is not None and request.app.state.ambiente not in {"local_operacional", "producao"}:
+        raise HTTPException(422, "Origem de lote disponível somente no modo operacional local.")
     vinculo = {"aluno_id": entrada.aluno_id} if entrada.aluno_id is not None else {}
     try:
         return repo.salvar_correcao(entrada.prova_id, entrada.aluno, entrada.resultado,
                                    respostas=entrada.respostas, comprovante=entrada.comprovante,
                                    operacao_id=entrada.operacao_id,
                                    permitir_provisorio=entrada.permitir_provisorio,
+                                   **({"origem_lote": entrada.origem_lote.model_dump(exclude_none=True)}
+                                      if entrada.origem_lote else {}),
                                    vincular_aluno=True, novo_homonimo=entrada.novo_homonimo, **vinculo)
     except AlunosAmbiguos as erro:
         raise HTTPException(409, {"codigo": "aluno_ambiguo", "mensagem": str(erro), "alunos": erro.alunos}) from None
+
+
+@router.get("/operacoes/correcao/{operacao_id}", dependencies=[Depends(exigir_modo_operacional)])
+def consultar_operacao_correcao(operacao_id: str, repo: Repo):
+    try:
+        return repo.consultar_operacao_correcao(operacao_id)
+    except ValueError:
+        raise HTTPException(422, "Identificador de operação inválido.") from None
+
+
+@router.get("/correcoes/exportar", dependencies=[Depends(exigir_modo_operacional)])
+def exportar_resultados(repo: Repo, prova_id: str | None = None):
+    try:
+        return JSONResponse(exportar_correcoes(repo, prova_id), headers={
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except AvaliacaoInexistente:
+        raise HTTPException(404, "Avaliação não encontrada; nenhum arquivo foi gerado.") from None
+    except LimiteExportacao:
+        raise HTTPException(413, "Limite de exportação excedido; nenhum arquivo foi gerado.") from None
 
 
 @router.post("/gabaritos/reconhecer")

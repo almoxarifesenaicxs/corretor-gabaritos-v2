@@ -7,6 +7,7 @@ import hashlib
 import unicodedata
 from difflib import SequenceMatcher
 from uuid import uuid4
+from threading import Lock
 
 from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, Aborted
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -28,6 +29,10 @@ class AlunosAmbiguos(ValueError):
     def __init__(self, alunos):
         super().__init__("Mais de um aluno possui esse nome. Confirme o cadastro correto.")
         self.alunos = [{"id": a["id"], "nome": a["nome"]} for a in alunos]
+
+
+_LEGADOS = {}
+_LEGADOS_LOCK = Lock()
 
 
 def _texto(valor, nome):
@@ -120,6 +125,42 @@ class Persistencia:
         except GoogleAPICallError as erro:
             raise ErroPersistencia("Não foi possível listar os registros.") from erro
 
+    def _alunos_exatos(self, nome_normalizado, tx=None):
+        """Consulta indexada; o filtro também participa da transação de salvamento."""
+        try:
+            consulta = self.cliente.collection("alunos").where(
+                filter=FieldFilter("nome_normalizado", "==", nome_normalizado))
+            atuais = [s.to_dict() for s in consulta.stream(transaction=tx)]
+            legados = []
+            ids_atuais = {a["id"] for a in atuais}
+            for registro in self._indice_legado().get(nome_normalizado, ()):
+                identificador = registro["id"]
+                if identificador in ids_atuais:
+                    continue
+                antigo = self._ler_transacao(self.cliente.collection("alunos").document(identificador), tx) if tx else self.consultar_aluno(identificador)
+                if antigo is not None and normalizar_nome(antigo["nome"]) == nome_normalizado:
+                    legados.append(antigo)
+            return atuais + legados
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível consultar os alunos.") from erro
+
+    def _indice_legado(self):
+        """Uma varredura por processo/projeto, sem escrever ou migrar dados antigos."""
+        projeto = self.cliente.project
+        chave = projeto if isinstance(projeto, str) else id(self.cliente)
+        with _LEGADOS_LOCK:
+            if chave not in _LEGADOS:
+                encontrados = {}
+                try:
+                    for snapshot in self.cliente.collection("alunos").stream():
+                        aluno = snapshot.to_dict()
+                        if "nome_normalizado" not in aluno:
+                            encontrados.setdefault(normalizar_nome(aluno["nome"]), []).append(aluno)
+                except GoogleAPICallError as erro:
+                    raise ErroPersistencia("Não foi possível indexar alunos antigos.") from erro
+                _LEGADOS[chave] = encontrados
+            return _LEGADOS[chave]
+
     def criar_prova(self, titulo, descricao=None):
         titulo = _texto(titulo, "Título")
         if descricao is not None and not isinstance(descricao, str):
@@ -188,7 +229,7 @@ class Persistencia:
 
     def salvar_correcao(self, prova_id, aluno, resultado, *, permitir_provisorio=False, aluno_id=None,
                         vincular_aluno=False, novo_homonimo=False, respostas=None,
-                        comprovante=None, operacao_id=None):
+                        comprovante=None, operacao_id=None, origem_lote=None):
         aluno = _texto(aluno, "Aluno")
         _validar_resultado(resultado)
         if type(permitir_provisorio) is not bool:
@@ -197,7 +238,8 @@ class Persistencia:
             raise ValueError("Resultado provisório exige permitir_provisorio=True explícito.")
         if respostas is not None:
             return self._salvar_verificada(prova_id, aluno, resultado, respostas, comprovante,
-                                           operacao_id, aluno_id, novo_homonimo, permitir_provisorio)
+                                           operacao_id, aluno_id, novo_homonimo, permitir_provisorio,
+                                           origem_lote)
         prova_id = self._exigir_prova(prova_id)
         if vincular_aluno:
             return self._salvar_com_aluno(prova_id, aluno, resultado, aluno_id, novo_homonimo)
@@ -229,6 +271,17 @@ class Persistencia:
             raise ValueError("Identificador de operação inválido.") from None
         return self.cliente.collection("operacoes").document(tipo + "-" + chave)
 
+    def consultar_operacao_correcao(self, operacao_id):
+        """Consulta a confirmação durável, sem inferir falha por ausência momentânea."""
+        try:
+            snapshot = self._operacao("correcao", operacao_id).get()
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível consultar a operação.") from erro
+        if not snapshot.exists:
+            return {"estado": "nao_encontrada"}
+        registro = snapshot.to_dict()["registro"]
+        return {"estado": "confirmada", "registro": {"id": registro["id"]}}
+
     @staticmethod
     def _ler_transacao(ref, tx):
         snapshot = ref.get(transaction=tx)
@@ -251,7 +304,7 @@ class Persistencia:
             raise
 
     def _salvar_verificada(self, prova_id, nome, resultado, respostas, comprovante,
-                          operacao_id, aluno_id, novo_homonimo, permitir_provisorio):
+                          operacao_id, aluno_id, novo_homonimo, permitir_provisorio, origem_lote=None):
         prova_id = _id(prova_id)
         if type(novo_homonimo) is not bool or novo_homonimo and aluno_id is not None:
             raise ValueError("Selecione um aluno ou confirme outra pessoa com o mesmo nome.")
@@ -260,7 +313,8 @@ class Persistencia:
         dados = self._dados_aluno(nome, novo_homonimo=novo_homonimo)
         chave = self._operacao("correcao", operacao_id)
         assinatura = resumo_canonico([prova_id, dados["nome_normalizado"], respostas, resultado,
-                                     aluno_id, novo_homonimo, permitir_provisorio])
+                                     aluno_id, novo_homonimo, permitir_provisorio] +
+                                    ([origem_lote] if origem_lote is not None else []))
         controle = self.cliente.collection("nomes_alunos").document(
             hashlib.sha256(dados["nome_normalizado"].encode()).hexdigest())
         correcao_id = uuid4().hex
@@ -278,32 +332,33 @@ class Persistencia:
                 raise ValueError("Resultado diverge das respostas e do gabarito oficial.")
             conferir_respostas(comprovante, respostas, oficial["alternativas"])
             versao = self._ler_transacao(controle, tx) or {"versao": 0}
-            # Bootstrap somente por leitura: preserva IDs antigos e não migra alunos.
-            exatos = [s.to_dict() for s in self.cliente.collection("alunos").stream(transaction=tx)
-                      if normalizar_nome(s.to_dict()["nome"]) == dados["nome_normalizado"]]
             criar = False
             if aluno_id is not None:
-                aluno = next((a for a in exatos if a["id"] == aluno_id), None)
-                if aluno is None:
+                aluno = self._ler_transacao(self.cliente.collection("alunos").document(aluno_id), tx)
+                if aluno is None or normalizar_nome(aluno["nome"]) != dados["nome_normalizado"]:
                     raise ValueError("Aluno selecionado não corresponde ao nome confirmado.")
             elif novo_homonimo:
                 aluno, criar = dados, True
-            elif len(exatos) > 1:
-                raise AlunosAmbiguos(exatos)
             else:
+                exatos = self._alunos_exatos(dados["nome_normalizado"], tx)
+                if len(exatos) > 1:
+                    raise AlunosAmbiguos(exatos)
                 aluno, criar = (exatos[0], False) if exatos else (dados, True)
             registro = {"id": correcao_id, "prova_id": prova_id, "aluno": aluno["nome"],
-                        "aluno_id": aluno["id"], "resultado": recalculado,
+                        "aluno_id": aluno["id"], "operacao_id": operacao_id,
+                        "resultado": recalculado,
                         "respostas": deepcopy(respostas), "gabarito_hash": resumo_canonico(oficial["alternativas"]),
                         "situacao": "provisoria" if recalculado["provisorio"] else "sem_pendencias",
-                        "processada_em": datetime.now(timezone.utc)}
+                        "processada_em": datetime.now(timezone.utc),
+                        **({"origem_lote": deepcopy(origem_lote)} if origem_lote is not None else {})}
             # Toda resolução de nome participa do mesmo controle transacional.
             # Uma criação concorrente de homônimo força nova leitura/decisão.
             tx.set(controle, {"versao": versao["versao"] + 1})
             if criar:
                 tx.create(self.cliente.collection("alunos").document(aluno["id"]), aluno)
             tx.create(self.cliente.collection("correcoes").document(correcao_id), registro)
-            tx.create(chave, {"assinatura": assinatura, "registro": registro})
+            tx.create(chave, {"assinatura": assinatura, "operacao_id": operacao_id,
+                              "registro": registro})
             return registro
 
         return self._transacao(salvar)
@@ -344,7 +399,7 @@ class Persistencia:
             elif novo_homonimo:
                 aluno, criar = dados, True
             else:
-                exatos = self.correspondencias_aluno(nome)["exatos"]
+                exatos = self._alunos_exatos(dados["nome_normalizado"])
                 if len(exatos) > 1:
                     raise AlunosAmbiguos(exatos)
                 aluno, criar = (exatos[0], False) if exatos else (dados, True)
@@ -377,14 +432,67 @@ class Persistencia:
             alunos = [a for a in alunos if termo in chave_busca(a["nome"])]
         return sorted(alunos, key=lambda a: (chave_busca(a["nome"]), a["id"]))
 
+    def listar_alunos_pagina(self, busca="", *, limite=30, cursor=None):
+        if not 1 <= limite <= 100:
+            raise ValueError("Limite de página inválido.")
+        prefixo = normalizar_nome(busca) if busca.strip() else ""
+        legados = sorted((a for nomes in self._indice_legado().values() for a in nomes
+                          if normalizar_nome(a["nome"]).startswith(prefixo)),
+                         key=lambda a: (chave_busca(a["nome"]), a["id"]))
+        if cursor and cursor.startswith("~legado~"):
+            try:
+                posicao = int(cursor.removeprefix("~legado~"))
+            except ValueError:
+                raise ValueError("Cursor de alunos inválido.") from None
+            if posicao < 0 or posicao >= len(legados):
+                raise ValueError("Cursor de alunos inválido.")
+            pagina = legados[posicao:posicao + limite]
+            proximo = posicao + limite
+            return {"alunos": pagina,
+                    "proximo_cursor": f"~legado~{proximo}" if proximo < len(legados) else None}
+        consulta = self.cliente.collection("alunos")
+        if prefixo:
+            consulta = consulta.where(filter=FieldFilter("nome_normalizado", ">=", prefixo)).where(
+                filter=FieldFilter("nome_normalizado", "<", prefixo + "\uf8ff"))
+        consulta = consulta.order_by("nome_normalizado").order_by("__name__")
+        try:
+            if cursor:
+                anterior = self.cliente.collection("alunos").document(_id(cursor)).get()
+                if not anterior.exists or "nome_normalizado" not in anterior.to_dict():
+                    raise ValueError("Cursor de alunos inválido.")
+                consulta = consulta.start_after(anterior)
+            documentos = list(consulta.limit(limite + 1).stream())
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível listar a página de alunos.") from erro
+        atuais = [s.to_dict() for s in documentos[:limite]]
+        if not atuais and legados:
+            pagina = legados[:limite]
+            return {"alunos": pagina,
+                    "proximo_cursor": f"~legado~{limite}" if len(legados) > limite else None}
+        proximo = (documentos[limite - 1].to_dict()["id"] if len(documentos) > limite
+                   else "~legado~0" if legados else None)
+        return {"alunos": atuais, "proximo_cursor": proximo}
+
     def correspondencias_aluno(self, nome):
         nome_normalizado, busca = normalizar_nome(nome), chave_busca(nome)
-        exatos, semelhantes = [], []
-        for aluno in self.listar_alunos():
-            if normalizar_nome(aluno["nome"]) == nome_normalizado:
-                exatos.append(aluno)
-            elif SequenceMatcher(None, busca, chave_busca(aluno["nome"])).ratio() >= .82:
-                semelhantes.append(aluno)
+        exatos = self._alunos_exatos(nome_normalizado)
+        # Sugestões limitadas por prefixo. Nunca associar por semelhança; só
+        # nome exato ou seleção explícita pode definir o aluno da correção.
+        prefixo = nome_normalizado[:2]
+        semelhantes = []
+        if prefixo:
+            try:
+                consulta = self.cliente.collection("alunos").where(
+                    filter=FieldFilter("nome_normalizado", ">=", prefixo)).where(
+                    filter=FieldFilter("nome_normalizado", "<", prefixo + "\uf8ff")).limit(40)
+                semelhantes = [a for s in consulta.stream() if (a := s.to_dict())["id"] not in
+                              {e["id"] for e in exatos} and
+                              SequenceMatcher(None, busca, chave_busca(a["nome"])).ratio() >= .82]
+                semelhantes.extend(a for nomes in self._indice_legado().values() for a in nomes
+                                   if a["id"] not in {e["id"] for e in exatos}
+                                   and SequenceMatcher(None, busca, chave_busca(a["nome"])).ratio() >= .82)
+            except GoogleAPICallError as erro:
+                raise ErroPersistencia("Não foi possível consultar nomes semelhantes.") from erro
         return {"exato": exatos[0] if len(exatos) == 1 else None, "exatos": exatos, "semelhantes": semelhantes}
 
     def historico_aluno(self, aluno_id):
@@ -392,16 +500,72 @@ class Persistencia:
         aluno = self.consultar_aluno(aluno_id)
         if aluno is None:
             return None
-        provas = {p["id"]: p["titulo"] for p in self.listar_provas()}
         vinculadas, legadas = [], []
-        for original in self._listar("correcoes"):
-            por_id = original.get("aluno_id") == aluno_id
-            por_nome = (not original.get("aluno_id")
-                        and normalizar_nome(original["aluno"]) == normalizar_nome(aluno["nome"]))
-            if por_id or por_nome:
-                registro = deepcopy(original)
-                registro["avaliacao"] = provas.get(registro["prova_id"], registro["prova_id"])
-                (vinculadas if por_id else legadas).append(registro)
+        try:
+            por_id = self.cliente.collection("correcoes").where(
+                filter=FieldFilter("aluno_id", "==", aluno_id)).stream()
+            por_nome = self.cliente.collection("correcoes").where(
+                filter=FieldFilter("aluno", "==", aluno["nome"])).stream()
+            vinculadas = [deepcopy(s.to_dict()) for s in por_id]
+            legadas = [deepcopy(registro) for s in por_nome
+                       if not (registro := s.to_dict()).get("aluno_id")]
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível consultar o histórico.") from erro
+        provas = {}
+        for registro in (*vinculadas, *legadas):
+            prova_id = registro["prova_id"]
+            if prova_id not in provas:
+                prova = self.consultar_prova(prova_id)
+                provas[prova_id] = prova["titulo"] if prova else prova_id
+            registro["avaliacao"] = provas[prova_id]
         for registros in (vinculadas, legadas):
             registros.sort(key=lambda c: str(c["processada_em"]), reverse=True)
         return {"aluno": aluno, "correcoes": vinculadas, "legadas_por_nome": legadas}
+
+    def historico_aluno_pagina(self, aluno_id, *, limite=30, cursor=None, somente_legadas=False):
+        if not 1 <= limite <= 100:
+            raise ValueError("Limite de página inválido.")
+        aluno_id = _id(aluno_id)
+        aluno = self.consultar_aluno(aluno_id)
+        if aluno is None:
+            return None
+        if somente_legadas:
+            try:
+                por_nome = self.cliente.collection("correcoes").where(
+                    filter=FieldFilter("aluno", "==", aluno["nome"])).stream()
+                legadas = [deepcopy(registro) for s in por_nome
+                           if not (registro := s.to_dict()).get("aluno_id")]
+            except GoogleAPICallError as erro:
+                raise ErroPersistencia("Não foi possível consultar o histórico antigo.") from erro
+            provas = {}
+            for registro in legadas:
+                prova_id = registro["prova_id"]
+                if prova_id not in provas:
+                    prova = self.consultar_prova(prova_id)
+                    provas[prova_id] = prova["titulo"] if prova else prova_id
+                registro["avaliacao"] = provas[prova_id]
+            legadas.sort(key=lambda c: str(c["processada_em"]), reverse=True)
+            return {"aluno": aluno, "correcoes": [], "legadas_por_nome": legadas,
+                    "proximo_cursor": None}
+        consulta = self.cliente.collection("correcoes").where(
+            filter=FieldFilter("aluno_id", "==", aluno_id)).order_by(
+                "processada_em", direction="DESCENDING").order_by("__name__")
+        try:
+            if cursor:
+                anterior = self.cliente.collection("correcoes").document(_id(cursor)).get()
+                if not anterior.exists or anterior.to_dict().get("aluno_id") != aluno_id:
+                    raise ValueError("Cursor de histórico inválido.")
+                consulta = consulta.start_after(anterior)
+            documentos = list(consulta.limit(limite + 1).stream())
+            correcoes = [deepcopy(s.to_dict()) for s in documentos[:limite]]
+        except GoogleAPICallError as erro:
+            raise ErroPersistencia("Não foi possível consultar o histórico.") from erro
+        provas = {}
+        for registro in correcoes:
+            prova_id = registro["prova_id"]
+            if prova_id not in provas:
+                prova = self.consultar_prova(prova_id)
+                provas[prova_id] = prova["titulo"] if prova else prova_id
+            registro["avaliacao"] = provas[prova_id]
+        return {"aluno": aluno, "correcoes": correcoes, "legadas_por_nome": [],
+                "proximo_cursor": documentos[limite - 1].to_dict()["id"] if len(documentos) > limite else None}

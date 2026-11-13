@@ -104,9 +104,11 @@ def test_config_insegura_ou_indisponibilidade_falha_fechado(contexto, monkeypatc
     assert "segredo" not in resposta.text
 
 
-def test_saude_e_login_estaticos_sem_token(contexto):
+def test_saude_e_dashboard_estaticos_sem_token(contexto):
     http, verificar, _, _ = contexto
     assert http.get("/api/health").status_code == 200
-    assert 'id="login-form"' in http.get("/interface/").text
+    interface = http.get("/interface/").text
+    assert 'id="sidebar"' in interface
+    assert 'id="login-form"' in interface
     assert http.get("/interface/js/auth.mjs").status_code == 200
     verificar.assert_not_called()

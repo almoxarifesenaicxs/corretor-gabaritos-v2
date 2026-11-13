@@ -1,0 +1,22 @@
+# Consultas Firestore para o evento
+
+O backend local operacional continua usando Firestore real somente quando configurado explicitamente; os testes usam cliente fictício e não acessam o projeto. A correção continua recalculada no servidor, com gabarito oficial, comprovante, `operacao_id` e transação.
+
+## O que mudou
+
+- Ao salvar uma correção, a busca exata usa o índice de campo `alunos.nome_normalizado`. Se o operador selecionou um `aluno_id`, a transação lê diretamente esse documento. A criação explícita de um novo homônimo dispensa busca prévia. O documento `nomes_alunos` ainda serializa decisões concorrentes sobre o mesmo nome.
+- Alunos antigos sem `nome_normalizado` são identificados por **uma varredura por processo e projeto**, mantida em memória como mapa de nome normalizado para ID. A transação relê diretamente cada ID encontrado. Não há gravação nem migração automática. Reiniciar o backend exige nova varredura; inclusão externa de novos documentos legados durante a execução exige reinício.
+- Sugestões de nomes semelhantes usam prefixo e no máximo 40 candidatos. Semelhança nunca associa automaticamente um aluno. A consulta não garante sugestões exaustivas para grafias com prefixo diferente; a escolha de homônimos exatos permanece obrigatória.
+- A interface usa páginas de 30 alunos e 30 correções por histórico, com cursor. A busca paginada procura o **início** do nome normalizado. Alunos antigos sem esse campo aparecem em páginas finais, a partir do índice em memória; por isso a ordenação global entre novos e antigos não é alfabética. O contrato antigo sem `pagina=true` continua disponível para compatibilidade, mas não é usado pela interface durante o evento.
+- O histórico consulta correções vinculadas por `aluno_id`; registros antigos sem vínculo são consultados por `aluno` exato **somente quando o operador usa o botão para buscar correções antigas**. O título da avaliação é lido uma vez por avaliação distinta em cada página. A lista antiga sem paginação continua disponível.
+- Depois de salvar, a interface utiliza `aluno_id` retornado e não recarrega toda a lista nem faz nova busca de correspondência. A lista é carregada ao abrir a aba Alunos.
+
+## Leituras e índices
+
+**Projeção, não medição no Firestore real.** Com 1.000 alunos e 1.000 salvamentos, a antiga varredura transacional de alunos poderia retornar aproximadamente **1.000.000 documentos**. Agora há uma varredura inicial de até 1.000 documentos legados/atuais por processo e, por salvamento, consulta exata que retorna somente homônimos do nome informado (ou uma leitura direta se o ID foi selecionado). Para 1.000 nomes únicos, a ordem de grandeza passa a cerca de **2.000 leituras de alunos**, incluindo a varredura inicial; consultas vazias têm cobrança mínima. Isso exclui leituras de prova, gabarito, operação idempotente, controle transacional, índices, sugestões e histórico. Transações repetidas por conflito aumentam o total. Listar 30 alunos lê aproximadamente 30–31 documentos, mais uma leitura de cursor nas páginas seguintes; o carregamento anterior lia todos os alunos a cada abertura ou salvamento.
+
+Antes do evento, confirme no Firestore (default) os índices de campo único para `alunos.nome_normalizado`, `correcoes.aluno_id` e `correcoes.aluno`. A paginação do histórico precisa de um índice composto na coleção `correcoes`: `aluno_id` ascendente e `processada_em` descendente; `__name__` é o desempate do cursor. Verifique o estado **Ready** do índice e execute consultas de ensaio autorizadas antes de operar. A consulta de alunos por prefixo usa apenas `nome_normalizado` ordenado. O Firestore retorna um erro com link de criação quando faltar um índice; não crie índices durante o evento sem tempo para conclusão.
+
+Documentos de alunos sem `nome_normalizado` aparecem nas páginas finais, mas exigem a varredura inicial por processo. Registros antigos com variações de caixa ou espaços no campo `aluno` podem não aparecer na consulta direcionada de histórico legado; essa lacuna exige um campo normalizado e migração testada. Não execute migração em dados reais sem autorização e backup. Essas limitações devem ser verificadas antes do evento.
+
+Use o emulador ou dados fictícios para ensaiar mais de 1.000 alunos, homônimos, reenvio da mesma operação, concorrência e paginação. Em ambiente autorizado, meça leituras reais e latência com as métricas do Firestore ou Query Explain; os números acima são apenas projeções do caminho de código.

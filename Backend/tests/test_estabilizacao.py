@@ -95,6 +95,25 @@ def test_reenvio_e_conflito_de_operacao(banco, http):
     assert dados == antes
 
 
+def test_origem_lote_integra_assinatura_idempotente_sem_imagem(banco):
+    repo, dados = banco
+    prova = repo.criar_avaliacao("Oficial", {str(i): "A" for i in range(1, 51)})
+    body = entrada_segura(prova["id"])
+    origem = {"lote_id": "a" * 32, "indice": 0, "imagem_sha256": "b" * 64}
+    argumentos = dict(respostas=body["respostas"], comprovante=body["comprovante"],
+                      operacao_id=body["operacao_id"], origem_lote=origem)
+    primeiro = repo.salvar_correcao(body["prova_id"], body["aluno"], body["resultado"], **argumentos)
+    antes = deepcopy(dados)
+    segundo = repo.salvar_correcao(body["prova_id"], body["aluno"], body["resultado"], **argumentos)
+    assert segundo == primeiro
+    assert dados == antes
+    assert primeiro["origem_lote"] == origem
+    assert "imagem" not in primeiro
+    with pytest.raises(RegistroExistente):
+        repo.salvar_correcao(body["prova_id"], body["aluno"], body["resultado"],
+                            **{**argumentos, "origem_lote": {**origem, "indice": 1}})
+
+
 def test_avaliacao_idempotente_e_inseparavel_do_gabarito(banco, http):
     body = {"titulo": "Oficial", "alternativas": {str(i): "A" for i in range(1, 51)},
             "confirmado": True, "operacao_id": uuid4().hex}

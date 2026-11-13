@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from google.api_core.exceptions import AlreadyExists, PermissionDenied, Aborted
 from google.cloud.firestore_v1 import _helpers
+from google.cloud.firestore_v1.base_query import FieldFilter
 import pytest
 
 from app.services.correcao import corrigir_respostas, ErroCorrecao
@@ -21,11 +22,14 @@ def resultado(provisorio=False):
 
 @pytest.fixture
 def banco(monkeypatch):
+    from app.services.persistencia import _LEGADOS
+    _LEGADOS.clear()
     dados = {}
     cliente = MagicMock()
 
-    def snapshot(valor):
-        return SimpleNamespace(exists=valor is not None, to_dict=lambda: deepcopy(valor))
+    def snapshot(valor, identificador=None):
+        return SimpleNamespace(id=identificador, exists=valor is not None,
+                               to_dict=lambda: deepcopy(valor))
 
     def colecao(nome):
         referencia = MagicMock()
@@ -44,18 +48,50 @@ def banco(monkeypatch):
                 chave = (nome, identificador)
                 if transaction is not None:
                     transaction.leituras[chave] = deepcopy(dados.get(chave))
-                return snapshot(dados.get(chave))
+                return snapshot(dados.get(chave), identificador)
             ref.get.side_effect = obter
             return ref
 
         referencia.document.side_effect = documento
-        referencia.stream.side_effect = lambda **kwargs: (snapshot(v) for (c, _), v in list(dados.items()) if c == nome)
+        referencia.stream.side_effect = lambda **kwargs: (snapshot(v, i) for (c, i), v in list(dados.items()) if c == nome)
         def filtrar(*, filter):
             consulta = MagicMock()
-            consulta.stream.side_effect = lambda: (snapshot(v) for (c, _), v in dados.items()
-                                                    if c == nome and v[filter.field_path] == filter.value)
+            filtros = [filter]
+            limite = [None]
+            ordenacao = []
+            cursor = [None]
+            consulta.where.side_effect = lambda *, filter: (filtros.append(filter) or consulta)
+            consulta.limit.side_effect = lambda tamanho: (limite.__setitem__(0, tamanho) or consulta)
+            consulta.order_by.side_effect = lambda campo, direction="ASCENDING": (ordenacao.append((campo, direction)) or consulta)
+            consulta.start_after.side_effect = lambda anterior: (cursor.__setitem__(0, anterior.id) or consulta)
+            def transmitir(transaction=None):
+                def corresponde(chave, valor, filtro):
+                    atual = chave[1] if filtro.field_path == "__name__" else valor.get(filtro.field_path)
+                    if filtro.op_string == "==":
+                        return atual == filtro.value
+                    if atual is None:
+                        return False
+                    return atual >= filtro.value if filtro.op_string == ">=" else atual < filtro.value
+                encontrados = [(chave, v) for chave, v in dados.items()
+                               if chave[0] == nome and all(corresponde(chave, v, f) for f in filtros)]
+                for campo, direction in reversed(ordenacao):
+                    encontrados.sort(key=lambda item: item[0][1] if campo == "__name__" else item[1].get(campo),
+                                    reverse=direction == "DESCENDING")
+                if cursor[0] is not None:
+                    indice = next((i for i, (_, valor) in enumerate(encontrados)
+                                   if valor["id"] == cursor[0]), None)
+                    encontrados = encontrados[indice + 1:] if indice is not None else []
+                if limite[0] is not None:
+                    encontrados = encontrados[:limite[0]]
+                for chave, valor in encontrados:
+                    if transaction is not None:
+                        transaction.leituras[chave] = deepcopy(valor)
+                    yield snapshot(valor, chave[1])
+            consulta.stream.side_effect = transmitir
             return consulta
         referencia.where.side_effect = filtrar
+        referencia.order_by.side_effect = lambda campo, direction="ASCENDING": filtrar(
+            filter=FieldFilter(campo, ">=", "")).order_by(campo, direction)
         return referencia
 
     cliente.collection.side_effect = colecao

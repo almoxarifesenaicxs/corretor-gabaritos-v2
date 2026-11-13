@@ -14,6 +14,7 @@ from app.autenticacao import autorizar_credencial
 from app.ambiente import Ambiente
 
 LIMITE_CORPO_UPLOAD = 11 * 1024 * 1024
+LIMITE_CORPO_LOTE = 33 * 1024 * 1024
 LIMITE_CORPO_JSON = 128 * 1024
 PRAZO_CORPO = 30
 _PROCESSAMENTOS = BoundedSemaphore(2)
@@ -21,6 +22,7 @@ _RECEPCOES = BoundedSemaphore(4)
 ROTAS_PROCESSAMENTO = {
     "/api/correcoes/processar", "/api/gabaritos/reconhecer",
     "/api/capturas/analisar", "/api/alunos/reconhecer-nome", "/api/correcoes/recalcular",
+    "/api/lotes/zip",
 }
 
 
@@ -32,10 +34,15 @@ class ProtecaoLocal:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        if (scope["path"].startswith("/api/lotes")
+                and self.ambiente.modo not in {"local_operacional", "producao", "homologacao"}):
+            return await JSONResponse({"detail": "Lotes disponíveis somente no modo operacional local."}, 404)(scope, receive, send)
         headers = dict(scope["headers"])
         if self.ambiente.modo == "homologacao":
             return await self.homologacao(scope, receive, send, headers)
-        if self.ambiente.modo == "producao":
+        if self.ambiente.modo == "local_operacional":
+            return await self.local_operacional(scope, receive, send, headers)
+        if self.ambiente.modo in {"producao", "publico"}:
             return await self.producao(scope, receive, send, headers)
         try:
             host = headers.get(b"host", b"").decode("ascii")
@@ -50,6 +57,31 @@ class ProtecaoLocal:
             permitido = False
         if not permitido:
             return await JSONResponse({"detail": "Aplicação disponível somente por acesso local direto."}, 403)(scope, receive, send)
+        return await self.receber_corpo(scope, receive, send, headers)
+
+    async def local_operacional(self, scope, receive, send, headers):
+        for nome in (b"host", b"origin", b"content-length", b"authorization"):
+            if sum(chave == nome for chave, _ in scope["headers"]) > 1:
+                return await JSONResponse({"detail": "Cabeçalhos ambíguos."}, 400)(scope, receive, send)
+        try:
+            cliente = ip_address(scope["client"][0]).is_loopback
+            servidor = scope.get("server")
+            host_configurado = self.ambiente.hosts[0]
+            servidor_local = (servidor is not None and servidor[0] == host_configurado
+                              and isinstance(servidor[1], int) and 1 <= servidor[1] <= 65535)
+            host_esperado = (f"[{host_configurado}]" if host_configurado == "::1"
+                             else host_configurado) + f":{servidor[1]}"
+            host = headers.get(b"host", b"").decode("ascii")
+            origem = headers.get(b"origin")
+            permitido = (cliente and servidor_local and scope["scheme"] == "http"
+                         and host == host_esperado
+                         and (origem is None or origem.decode("ascii") == f"http://{host}")
+                         and not any(chave == b"forwarded" or chave.startswith(b"x-forwarded-")
+                                     for chave, _ in scope["headers"]))
+        except (ValueError, UnicodeError, TypeError, KeyError, IndexError):
+            permitido = False
+        if not permitido:
+            return await JSONResponse({"detail": "Modo operacional disponível somente no loopback direto."}, 403)(scope, receive, send)
         return await self.receber_corpo(scope, receive, send, headers)
 
     async def homologacao(self, scope, receive, send, headers):
@@ -108,7 +140,7 @@ class ProtecaoLocal:
         preflight = (scope["method"] == "OPTIONS" and origem is not None
                      and b"access-control-request-method" in headers)
         publico = scope["method"] in {"GET", "HEAD"} and scope["path"] in {"/", "/api/health"}
-        if not publico and not preflight:
+        if not publico and not preflight and self.ambiente.modo == "producao":
             try:
                 valor = headers.get(b"authorization", b"").decode("ascii")
                 partes = valor.split()
@@ -136,7 +168,8 @@ class ProtecaoLocal:
 
     async def com_corpo(self, scope, receive, send, headers):
         multipart = headers.get(b"content-type", b"").lower().startswith(b"multipart/form-data")
-        limite = LIMITE_CORPO_UPLOAD if multipart else LIMITE_CORPO_JSON
+        limite = (LIMITE_CORPO_LOTE if scope["path"] == "/api/lotes/zip" and self.ambiente.modo in {"local_operacional", "producao"}
+                  else LIMITE_CORPO_UPLOAD if multipart else LIMITE_CORPO_JSON)
         try:
             declarado = int(headers.get(b"content-length", b"0"))
         except ValueError:

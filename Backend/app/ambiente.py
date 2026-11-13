@@ -16,10 +16,48 @@ class Ambiente:
 
 def carregar_ambiente(origens):
     modo = os.environ.get("APP_AMBIENTE", "local").strip().lower()
-    if modo not in {"local", "homologacao", "producao"}:
-        raise ValueError("APP_AMBIENTE deve ser local, homologacao ou producao.")
-    if modo == "local":
+    if modo not in {"local", "local_publico", "local_operacional", "homologacao", "producao", "publico"}:
+        raise ValueError("APP_AMBIENTE deve ser local, local_publico, local_operacional, homologacao, producao ou publico.")
+    if modo == "local_publico" and os.environ.get("FIRESTORE_MODO", "emulador").strip().lower() != "emulador":
+        raise ValueError("local_publico exige FIRESTORE_MODO=emulador.")
+    if modo in {"local", "local_publico"}:
         return Ambiente(modo)
+    if modo == "local_operacional":
+        # Esta execução serve a interface e a API na mesma origem local. Não é
+        # adequada para proxy ou plataforma de hospedagem pública.
+        if any(os.environ.get(nome) for nome in (
+                "RENDER_SERVICE_ID", "RENDER_EXTERNAL_URL", "RENDER_INSTANCE_ID",
+                "RENDER_EXTERNAL_HOSTNAME", "PORT", "VERCEL", "K_SERVICE")):
+            raise ValueError("local_operacional não pode iniciar em hospedagem pública.")
+        host = os.environ.get("LOCAL_OPERACIONAL_HOST", "127.0.0.1").strip()
+        if host not in {"127.0.0.1", "::1"}:
+            raise ValueError("LOCAL_OPERACIONAL_HOST deve ser 127.0.0.1 ou ::1.")
+        if os.environ.get("SERVIR_FRONTEND", "").strip().lower() != "true":
+            raise ValueError("local_operacional exige SERVIR_FRONTEND=true.")
+        if origens or os.environ.get("FORWARDED_ALLOW_IPS", "").strip():
+            raise ValueError("local_operacional não aceita CORS nem proxies configurados.")
+        if os.environ.get("FIRESTORE_MODO") != "real" or any(os.environ.get(nome) for nome in (
+                "FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST")):
+            raise ValueError("local_operacional exige FIRESTORE_MODO=real, sem emuladores.")
+        projeto = os.environ.get("FIREBASE_PROJECT_ID", "")
+        if (not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", projeto)
+                or projeto.startswith("demo-")):
+            raise ValueError("local_operacional exige FIREBASE_PROJECT_ID real e explícito.")
+        caminho = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if not caminho or not Path(caminho).is_file():
+            raise ValueError("local_operacional exige arquivo privado de credenciais no backend.")
+        segredo = os.environ.get("INTEGRIDADE_CHAVE", "")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", segredo) or len(set(segredo.lower())) < 8:
+            raise ValueError("local_operacional exige INTEGRIDADE_CHAVE aleatória de 32 bytes em hexadecimal.")
+        # Certificate valida o formato e a chave privada sem abrir conexão.
+        # ApplicationDefault, usado pela persistência, lerá o mesmo arquivo.
+        from firebase_admin import credentials
+        try:
+            if credentials.Certificate(caminho).project_id != projeto:
+                raise ValueError("Projeto das credenciais diferente do projeto configurado.")
+        except Exception:
+            raise ValueError("Credenciais locais inválidas ou de outro projeto Firebase.") from None
+        return Ambiente(modo, (host,), (), bytes.fromhex(segredo))
     if modo == "homologacao":
         hosts = tuple(host.strip().lower() for host in os.environ.get("ALLOWED_HOSTS", "").split(","))
         if any(len(host) > 253 or any(not re.fullmatch(
@@ -40,9 +78,10 @@ def carregar_ambiente(origens):
         raise ValueError("Produção exige FIRESTORE_MODO=real.")
     if os.environ.get("FIRESTORE_EMULATOR_HOST") or os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
         raise ValueError("Emuladores não são permitidos em produção.")
-    uids = [uid.strip() for uid in os.environ.get("ADMIN_UIDS", "").split(",")]
-    if not uids or any(not uid or "*" in uid or len(uid) > 128 for uid in uids):
-        raise ValueError("Produção exige ADMIN_UIDS explícitos, sem curingas ou itens vazios.")
+    if modo == "producao":
+        uids = [uid.strip() for uid in os.environ.get("ADMIN_UIDS", "").split(",")]
+        if not uids or any(not uid or "*" in uid or len(uid) > 128 for uid in uids):
+            raise ValueError("Produção exige ADMIN_UIDS explícitos, sem curingas ou itens vazios.")
     if not origens or any(urlsplit(origem).scheme != "https" for origem in origens):
         raise ValueError("Produção exige CORS_ORIGINS explícitas em HTTPS.")
     hosts = tuple(host.strip().lower() for host in os.environ.get("ALLOWED_HOSTS", "").split(","))
@@ -61,9 +100,10 @@ def carregar_ambiente(origens):
     # a variável que normalmente habilita confiança irrestrita no Uvicorn.
     if os.environ.get("FORWARDED_ALLOW_IPS", "").strip() == "*":
         raise ValueError("Confiança irrestrita em proxies não é permitida.")
-    from app.autenticacao import _app_auth
-    try:
-        _app_auth(projeto).credential.get_credential()
-    except Exception:
-        raise ValueError("Credenciais de autenticação indisponíveis ou inválidas.") from None
+    if modo == "producao":
+        from app.autenticacao import _app_auth
+        try:
+            _app_auth(projeto).credential.get_credential()
+        except Exception:
+            raise ValueError("Credenciais de autenticação indisponíveis ou inválidas.") from None
     return Ambiente(modo, hosts, tuple(origens), bytes.fromhex(segredo))

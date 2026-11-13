@@ -26,7 +26,10 @@ def test_interface_local_e_config_publica():
         assert http.get("/interface/").status_code == 200
         config = http.get("/interface/js/config.mjs")
         assert config.status_code == 200
-        assert 'API_BASE_URL = ""' in config.text
+        assert 'const API_PUBLICA = "https://corretor-gabaritos-8yal.onrender.com"' in config.text
+        assert '["localhost", "127.0.0.1"]' in config.text
+        assert 'globalThis.location?.hostname' in config.text
+        assert 'export const API_BASE_URL = ambienteLocal ? "" : API_PUBLICA;' in config.text
         assert http.get("/interface/tests/unit.test.mjs").status_code == 404
 
 

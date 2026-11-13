@@ -61,6 +61,44 @@ def test_producao_autorizada_e_cors(servidor):
     repo.listar_provas.assert_called_once()
 
 
+def test_lote_exportacao_e_recuperacao_exigem_admin_em_producao(servidor, monkeypatch):
+    from app.routes import lotes
+    api, http, verificar, repo = servidor
+    monkeypatch.setattr(lotes.lotes_zip, "manifesto", lambda lote_id: {
+        "lote_id": lote_id, "total": 1, "imagens": []})
+    monkeypatch.setattr(lotes.lotes_zip, "imagem", lambda lote_id, indice: (
+        b"imagem-ficticia", "foto.jpg", "image/jpeg"))
+    monkeypatch.setattr(interface, "exportar_correcoes", lambda repo, prova_id: {
+        "csv": "id\n", "resumo": {"total_correcoes": 0}})
+    repo.consultar_operacao_correcao.return_value = {"situacao": "confirmada"}
+    paths = ["/api/lotes/lote-ficticio", "/api/lotes/lote-ficticio/imagens/0",
+             "/api/correcoes/exportar", "/api/operacoes/correcao/operacao-ficticia"]
+    for path in paths:
+        assert http.get(path, headers={"Origin": BEARER["Origin"]}).status_code == 401
+        assert http.get(path, headers=BEARER).status_code == 200
+    assert http.get(paths[1], headers=BEARER).headers["x-image-sha256"]
+    assert http.delete("/api/lotes/lote-ficticio", headers={"Origin": BEARER["Origin"]}).status_code == 401
+    verificar.return_value = {"uid": "nao-autorizado"}
+    for path in paths:
+        assert http.get(path, headers=BEARER).status_code == 403
+
+
+def test_upload_zip_em_producao_exige_admin_e_preserva_limite(servidor, monkeypatch):
+    from app.routes import lotes
+    _, http, verificar, _ = servidor
+    criar = MagicMock(return_value={"lote_id": "lote-ficticio", "total": 1, "imagens": []})
+    monkeypatch.setattr(lotes.lotes_zip, "criar", criar)
+    arquivo = {"arquivo": ("lote.zip", b"zip-ficticio", "application/zip")}
+    assert http.post("/api/lotes/zip", files=arquivo,
+        headers={"Origin": BEARER["Origin"]}).status_code == 401
+    criar.assert_not_called()
+    assert http.post("/api/lotes/zip", files=arquivo, headers=BEARER).status_code == 200
+    criar.assert_called_once()
+    verificar.return_value = {"uid": "nao-autorizado"}
+    assert http.post("/api/lotes/zip", files=arquivo, headers=BEARER).status_code == 403
+    criar.assert_called_once()
+
+
 @pytest.mark.parametrize("caso,status", [("ausente", 401), ("invalido", 401),
     ("expirado", 401), ("sem_permissao", 403)])
 def test_todas_rotas_protegidas_em_producao(servidor, caso, status):
@@ -91,7 +129,7 @@ def test_preflight_nao_executa_operacao(servidor):
     verificar.assert_not_called()
     repo.listar_provas.assert_not_called()
     headers["Access-Control-Request-Method"] = "DELETE"
-    assert http.options("/api/avaliacoes", headers=headers).status_code == 400
+    assert http.options("/api/lotes/lote-ficticio", headers=headers).status_code == 200
 
 
 @pytest.mark.parametrize("origem", ["https://invasor.example", "null", "https://frontend.example.invasor.test"])

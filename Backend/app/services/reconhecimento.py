@@ -23,17 +23,7 @@ def carregar_imagem(caminho: str | Path) -> np.ndarray:
         raise ErroLeitura("Formato incompatível: use PDF, JPG ou PNG.")
     try:
         if caminho.suffix.lower() == ".pdf":
-            # Abrir por bytes evita manter o arquivo bloqueado no Windows se
-            # o construtor do PyMuPDF falhar antes de entrar no contexto.
-            with pymupdf.open(stream=caminho.read_bytes(), filetype="pdf") as documento:
-                if documento.needs_pass or len(documento) == 0:
-                    raise ErroLeitura("PDF protegido ou sem páginas.")
-                pagina = documento[0]
-                validar_dimensoes(math.ceil(pagina.rect.width * 150 / 72),
-                                  math.ceil(pagina.rect.height * 150 / 72))
-                pix = pagina.get_pixmap(dpi=150, colorspace=pymupdf.csRGB, alpha=False)
-                rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
-                return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            return converter_pagina_pdf(caminho, 0)
         conteudo = caminho.read_bytes()
         validar_cabecalho(conteudo)
         imagem = cv2.imdecode(np.frombuffer(conteudo, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -44,6 +34,28 @@ def carregar_imagem(caminho: str | Path) -> np.ndarray:
         raise
     except Exception as erro:
         raise ErroLeitura("Não foi possível decodificar o arquivo.") from erro
+
+
+def converter_pagina_pdf(caminho: str | Path, indice: int) -> np.ndarray:
+    """Renderiza somente uma página PDF usando o conversor e limites existentes."""
+    try:
+        # Abrir por stream evita bloqueio do arquivo temporário no Windows
+        # quando o construtor falha em um PDF corrompido.
+        with pymupdf.open(stream=Path(caminho).read_bytes(), filetype="pdf") as documento:
+            if documento.needs_pass or not documento.page_count:
+                raise ErroLeitura("PDF protegido ou sem páginas.")
+            if not 0 <= indice < documento.page_count:
+                raise ErroLeitura("Página PDF inexistente.")
+            pagina = documento[indice]
+            validar_dimensoes(math.ceil(pagina.rect.width * 150 / 72),
+                              math.ceil(pagina.rect.height * 150 / 72))
+            pix = pagina.get_pixmap(dpi=150, colorspace=pymupdf.csRGB, alpha=False)
+            rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except ErroLeitura:
+        raise
+    except Exception as erro:
+        raise ErroLeitura("Não foi possível converter a página PDF.") from erro
 
 
 def binarizar(imagem: np.ndarray) -> np.ndarray:
@@ -168,7 +180,12 @@ def identificar_tabelas(binaria: np.ndarray) -> list[tuple[list[int], list[int]]
         ys = centros(np.count_nonzero(horizontal[y:y+h, x:x+w], axis=1), w * 0.7)
         if len(xs) != 7 or len(ys) != 27:
             raise ErroLeitura("Tabela incompleta: esperadas seis colunas e 26 linhas com cabeçalho.")
-        for passos in (np.diff(xs), np.diff(ys)):
+        # A coluna de numeração pode ser mais estreita que as cinco alternativas.
+        # Compare a regularidade somente entre A–E; preserve a validação de
+        # largura mínima para todas as colunas e de espaçamento entre linhas.
+        if np.min(np.diff(xs)) <= 3:
+            raise ErroLeitura("Tabela com coluna estreita demais.")
+        for passos in (np.diff(xs)[1:], np.diff(ys)):
             if np.min(passos) <= 3 or np.ptp(passos) > np.median(passos) * 0.15:
                 raise ErroLeitura("Tabela com espaçamento irregular.")
         # Cada limite precisa existir em quase toda a extensão da tabela.
