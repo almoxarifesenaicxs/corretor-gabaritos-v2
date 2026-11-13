@@ -4,7 +4,7 @@ services:
   - type: web
     name: corretor-gabaritos-v2-api
     runtime: python
-    branch: feature/deploy-vercel-render
+    branch: main
     rootDir: Backend
     plan: 1c-2g
     autoDeployTrigger: "off"

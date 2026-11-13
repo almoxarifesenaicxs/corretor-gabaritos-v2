@@ -1,7 +1,14 @@
 # Preparação do backend para Render — homologação de infraestrutura (Etapa 19)
 
+O modo `publico` foi acrescentado para uso sem login, mas **não está ativado no
+Blueprint**. Sua configuração e implicações para dados de alunos estão em
+[acesso sem login](acesso-publico.md). `homologacao` continua restrito ao health check.
+
 Preparação somente: nenhum serviço criado, deploy executado ou produção ativada.
 O `render.yaml` usa `APP_AMBIENTE=homologacao` e deploy automático desativado.
+O Blueprint aponta para `main`. Para habilitar acesso administrativo após configurar
+os segredos e o Firebase, seguir [login administrativo](login-administrativo.md)
+e ativar `APP_AMBIENTE=producao` manualmente. Nunca ativar `publico` com dados reais.
 Importar um Blueprint pode iniciar sua primeira implantação mesmo com
 `autoDeployTrigger: off`: **não importar este arquivo nesta etapa**.
 
@@ -95,11 +102,13 @@ obrigatórias para produção conforme [Firebase produção](firebase-producao.m
 mas não devem ser acrescentadas para fazer a homologação responder.
 Não habilitar proxy headers nem `FORWARDED_ALLOW_IPS=*`.
 
-## Três modos de execução
+## Modos de execução
 
 - **local:** padrão quando `APP_AMBIENTE` não é definido. Mantém as restrições de
   acesso direto por loopback, Host local, origem e cabeçalhos encaminhados.
   Autenticação e autorização continuam obrigatórias nas rotas administrativas.
+- **local_publico:** mantém a barreira local de loopback, Host e Origin, mas abre
+  as rotas sem login usando somente Firestore Emulator. Não aceita Firestore real.
 - **homologacao:** permite remotamente apenas `GET /api/health` com Host autorizado.
   Não registra routers administrativos, raiz, interface, `/docs`, `/redoc` ou
   `/openapi.json`. O middleware retorna 403 para qualquer outro caminho ou método,
@@ -108,6 +117,10 @@ Não habilitar proxy headers nem `FORWARDED_ALLOW_IPS=*`.
   `SERVIR_FRONTEND` deve permanecer `false` (também seu padrão neste modo).
 - **producao:** mantém validação completa de configuração, autenticação e
   autorização existentes. Sua ativação não faz parte desta etapa.
+- **publico:** exige configuração explícita de Firestore real, chave de integridade,
+  Host e origem HTTPS autorizados. Não exige Firebase Authentication nem `ADMIN_UIDS`.
+  Qualquer cliente que alcance a API pode ler e alterar dados; veja
+  [acesso sem login](acesso-publico.md) antes de ativá-lo.
 
 Em homologação, cabeçalhos `Forwarded` e `X-Forwarded-*` não concedem acesso e são
 removidos antes da rota de saúde. Um Host permitido não é identidade administrativa:
