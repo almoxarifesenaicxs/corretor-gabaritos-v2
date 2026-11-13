@@ -4,17 +4,20 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import hashlib
+import logging
 import unicodedata
 from difflib import SequenceMatcher
 from uuid import uuid4
 from threading import Lock
 
-from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, Aborted
+from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, Aborted, FailedPrecondition
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1 import transactional
 
 from app.services.correcao import validar_gabarito, corrigir_respostas
 from app.services.integridade import conferir_respostas, resumo_canonico
+
+logger = logging.getLogger(__name__)
 
 
 class ErroPersistencia(RuntimeError):
@@ -560,6 +563,28 @@ class Persistencia:
                 consulta = consulta.start_after(anterior)
             documentos = list(consulta.limit(limite + 1).stream())
             correcoes = [deepcopy(s.to_dict()) for s in documentos[:limite]]
+        except FailedPrecondition as erro:
+            if "query requires an index" not in str(erro).lower():
+                raise ErroPersistencia("Não foi possível consultar o histórico.") from erro
+            logger.warning("historico_paginado indice_composto_indisponivel fallback=aluno_id")
+            # Enquanto o índice composto não estiver pronto, a consulta de
+            # igualdade já utilizada pelo histórico simples mantém o acesso.
+            # Ordenar e paginar após a leitura preserva o contrato, sem truncar.
+            try:
+                documentos = [s for s in self.cliente.collection("correcoes").where(
+                    filter=FieldFilter("aluno_id", "==", aluno_id)).stream()
+                    if s.to_dict().get("processada_em") is not None]
+                documentos.sort(key=lambda s: s.id)
+                documentos.sort(key=lambda s: s.to_dict()["processada_em"], reverse=True)
+                if cursor:
+                    posicao = next((i for i, s in enumerate(documentos) if s.id == cursor), None)
+                    if posicao is None:
+                        raise ValueError("Cursor de histórico inválido.")
+                    documentos = documentos[posicao + 1:]
+                documentos = documentos[:limite + 1]
+                correcoes = [deepcopy(s.to_dict()) for s in documentos[:limite]]
+            except GoogleAPICallError as falha:
+                raise ErroPersistencia("Não foi possível consultar o histórico.") from falha
         except GoogleAPICallError as erro:
             raise ErroPersistencia("Não foi possível consultar o histórico.") from erro
         provas = {}

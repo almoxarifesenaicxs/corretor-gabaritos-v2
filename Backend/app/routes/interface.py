@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from ipaddress import ip_address
+import logging
 from tempfile import TemporaryDirectory
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -25,6 +26,7 @@ from app.services.exportacao import exportar_correcoes, LimiteExportacao, Avalia
 from app.sessoes_publicas import FirestoreDaSessao
 
 router = APIRouter(prefix="/api", tags=["Interface"])
+logger = logging.getLogger(__name__)
 
 
 def exigir_modo_operacional(request: Request):
@@ -82,7 +84,11 @@ def obter_persistencia(request: Request):
         raise
     except RegistroExistente:
         raise HTTPException(409, "Registro já existente; sobrescrita não permitida.") from None
-    except ErroPersistencia:
+    except ErroPersistencia as erro:
+        # Registrar apenas a classe técnica: mensagens do SDK podem conter
+        # caminhos de documentos, URLs de índices e detalhes de configuração.
+        logger.warning("persistencia_indisponivel causa=%s",
+                       type(erro.__cause__).__name__ if erro.__cause__ else type(erro).__name__)
         raise HTTPException(503, "Banco de dados indisponível. Tente novamente.") from None
     except ValueError:
         raise HTTPException(422 if iniciado else 503, "Dados inválidos para persistência." if iniciado else "Não foi possível conectar ao banco.") from None
