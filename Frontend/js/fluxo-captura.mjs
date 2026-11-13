@@ -841,7 +841,9 @@ $("capture-button").addEventListener("click", async () => {
   try {
     const blob = await camera.capture();
     if (generation !== camera.generation) return;
-    setSource(new File([blob], "captura.png", { type: "image/png" }), true);
+    const jpeg = blob.type === "image/jpeg";
+    setSource(new File([blob], jpeg ? "captura.jpg" : "captura.png",
+      { type: jpeg ? "image/jpeg" : "image/png" }), true);
     message(
       validated
         ? "Captura feita. Confira nitidez antes de reconhecer."

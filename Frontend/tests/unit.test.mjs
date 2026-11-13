@@ -71,18 +71,24 @@ test("prefere câmera traseira sem exigir que ela exista; dispositivo escolhido 
 test("captura em retrato e paisagem preserva proporção e limita resolução", async () => {
   const original = globalThis.document;
   const dimensions = [];
+  const formats = [];
   globalThis.document = { createElement: () => {
     const canvas = {
       width: 0, height: 0,
       getContext: () => ({ drawImage: (...args) => dimensions.push(args.slice(-2)) }),
-      toBlob: callback => callback(new Blob(["foto"], { type: "image/png" })),
+      toBlob: (callback, format) => {
+        formats.push(format);
+        callback(new Blob(["foto"], { type: format }));
+      },
     };
     return canvas;
   } };
   try {
     await frameBlob({ videoWidth: 4032, videoHeight: 3024 });
     await frameBlob({ videoWidth: 3024, videoHeight: 4032 });
-    assert.deepEqual(dimensions, [[1920, 1440], [1440, 1920]]);
+    await frameBlob({ videoWidth: 4032, videoHeight: 3024 }, 800);
+    assert.deepEqual(dimensions, [[2560, 1920], [1920, 2560], [800, 600]]);
+    assert.deepEqual(formats, ["image/jpeg", "image/jpeg", "image/png"]);
   } finally { globalThis.document = original; }
 });
 

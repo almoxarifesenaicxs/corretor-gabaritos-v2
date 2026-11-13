@@ -78,6 +78,89 @@ def binarizar(imagem: np.ndarray) -> np.ndarray:
     return cv2.threshold(normalizada, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
 
+def _recortar_folha(imagem: np.ndarray) -> np.ndarray:
+    """Retifica contorno de papel comprovado; mantém a resolução observada."""
+    # Importação tardia evita o ciclo captura -> reconhecimento -> captura.
+    from app.services.captura import analisar_folha
+
+    altura, largura = imagem.shape[:2]
+    analise = analisar_folha(imagem, area_minima=0.08)
+    if not analise["folha_visivel"]:
+        return imagem
+    origem = (np.float32(analise["cantos"]) * np.float32([largura, altura])).astype(np.float32)
+    topo = np.linalg.norm(origem[1] - origem[0])
+    base = np.linalg.norm(origem[2] - origem[3])
+    esquerda = np.linalg.norm(origem[3] - origem[0])
+    direita = np.linalg.norm(origem[2] - origem[1])
+    nova_largura, nova_altura = round(max(topo, base)), round(max(esquerda, direita))
+    # Ampliar não recria um X pequeno. Papel menor que isto exige nova foto.
+    if nova_largura < 500 or nova_altura < 700:
+        return imagem
+    try:
+        validar_dimensoes(nova_largura, nova_altura)
+    except ValueError:
+        return imagem
+    destino = np.float32([[0, 0], [nova_largura - 1, 0],
+                          [nova_largura - 1, nova_altura - 1], [0, nova_altura - 1]])
+    matriz = cv2.getPerspectiveTransform(origem, destino)
+    return cv2.warpPerspective(imagem, matriz, (nova_largura, nova_altura),
+                               borderValue=(255, 255, 255) if imagem.ndim == 3 else 255)
+
+
+def _alinhar_grade(imagem: np.ndarray) -> np.ndarray:
+    """Corrige uma pequena inclinação somente quando linhas da grade concordam."""
+    altura, largura = imagem.shape[:2]
+    escala = min(1.0, 1200 / max(altura, largura))
+    amostra = (cv2.resize(imagem, None, fx=escala, fy=escala,
+                         interpolation=cv2.INTER_AREA) if escala < 1 else imagem)
+    binaria = binarizar(amostra)
+    minimo = max(60, round(binaria.shape[1] * 0.15))
+    linhas = cv2.HoughLinesP(binaria, 1, np.pi / 900, threshold=50,
+                             minLineLength=minimo, maxLineGap=12)
+    if linhas is None:
+        return imagem
+    angulos = []
+    for x1, y1, x2, y2 in linhas.reshape(-1, 4):
+        angulo = math.degrees(math.atan2(int(y2) - int(y1), int(x2) - int(x1)))
+        if abs(angulo) <= 7:
+            angulos.append(angulo)
+    if len(angulos) < 12:
+        return imagem
+    centro = float(np.median(angulos))
+    # Texto ou uma única borda não bastam para girar a folha inteira.
+    if not 0.35 <= abs(centro) <= 6 or np.mean(np.abs(np.array(angulos) - centro) <= 0.8) < 0.80:
+        return imagem
+    # A rasterização pode deslocar a estimativa em décimos de grau. Aceitar
+    # somente uma rotação cuja grade completa passe nas validações existentes.
+    for ajuste in (0, -0.1, 0.1, -0.2, 0.2):
+        matriz = cv2.getRotationMatrix2D((largura / 2, altura / 2), centro + ajuste, 1)
+        alinhada = cv2.warpAffine(imagem, matriz, (largura, altura),
+                                  flags=cv2.INTER_LINEAR,
+                                  borderValue=(255, 255, 255) if imagem.ndim == 3 else 255)
+        try:
+            if len(identificar_tabelas(binarizar(alinhada))) == 2:
+                return alinhada
+        except ErroLeitura:
+            pass
+    return imagem
+
+
+def alinhar_imagem(imagem: np.ndarray) -> np.ndarray:
+    """Tenta folha e inclinação, aceitando somente uma grade completa."""
+    folha = _recortar_folha(imagem)
+    for candidata in ((folha, imagem) if folha is not imagem else (imagem,)):
+        if candidata is not imagem:
+            try:
+                if len(identificar_tabelas(binarizar(candidata))) == 2:
+                    return candidata
+            except ErroLeitura:
+                pass
+        alinhada = _alinhar_grade(candidata)
+        if alinhada is not candidata:
+            return alinhada
+    return imagem
+
+
 def identificar_grade(binaria: np.ndarray) -> list[list[tuple[float, float, float]]]:
     """Localiza 25 linhas de dez círculos; rejeita grades incompletas/desalinhadas."""
     contornos, _ = cv2.findContours(binaria, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -122,10 +205,22 @@ def identificar_grade(binaria: np.ndarray) -> list[list[tuple[float, float, floa
 def reconhecer_imagem(imagem: np.ndarray) -> dict[str, dict]:
     """Retorna 50 questões, com resposta, estado e alternativas candidatas."""
     binaria = binarizar(imagem)
-    tabelas = identificar_tabelas(binaria)
-    if tabelas:
-        return reconhecer_tabelas(binaria, tabelas)
-    linhas = identificar_grade(binaria)
+    try:
+        tabelas = identificar_tabelas(binaria)
+        if tabelas:
+            return reconhecer_tabelas(binaria, tabelas)
+        linhas = identificar_grade(binaria)
+    except ErroLeitura:
+        # O caminho comum de scanner mantém custo e pixels originais. Corrigir
+        # inclinação somente quando a grade já falhou e há evidência de linhas.
+        alinhada = alinhar_imagem(imagem)
+        if alinhada is imagem:
+            raise
+        binaria = binarizar(alinhada)
+        tabelas = identificar_tabelas(binaria)
+        if tabelas:
+            return reconhecer_tabelas(binaria, tabelas)
+        linhas = identificar_grade(binaria)
     resultado = {}
     for bloco in range(2):
         for indice, linha in enumerate(linhas):
@@ -163,6 +258,11 @@ def identificar_tabelas(binaria: np.ndarray) -> list[tuple[list[int], list[int]]
                                  np.ones((1, max(10, largura // 40)), np.uint8))
     vertical = cv2.morphologyEx(binaria, cv2.MORPH_OPEN,
                                np.ones((max(10, altura // 60), 1), np.uint8))
+    # Uma ondulação curta desloca a linha alguns pixels; o orçamento é
+    # proporcional à folha e muito menor que a largura de uma célula.
+    faixa = max(3, round(min(altura, largura) * 0.006)) | 1
+    horizontal = cv2.dilate(horizontal, np.ones((faixa, 1), np.uint8))
+    vertical = cv2.dilate(vertical, np.ones((1, faixa), np.uint8))
     malha = cv2.bitwise_or(horizontal, vertical)
     contornos, _ = cv2.findContours(malha, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     tabelas = []

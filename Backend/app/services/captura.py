@@ -18,7 +18,7 @@ def decodificar_captura(conteudo):
     return imagem
 
 
-def analisar_folha(imagem):
+def analisar_folha(imagem, *, area_minima=0.15):
     """Retorna estado e cantos normalizados; não garante legibilidade da grade."""
     h, w = imagem.shape[:2]
     escala = min(1, 800 / max(h, w))
@@ -27,10 +27,16 @@ def analisar_folha(imagem):
     bordas = cv2.Canny(cv2.GaussianBlur(cinza, (5, 5), 0), 40, 120)
     bordas = cv2.morphologyEx(bordas, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contornos, _ = cv2.findContours(bordas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Uma borda fina pode ficar interrompida na foto. O papel claro contra um
+    # fundo mais escuro fornece um segundo contorno, sem ampliar a imagem.
+    _, papel = cv2.threshold(cv2.GaussianBlur(cinza, (5, 5), 0), 0, 255,
+                             cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    contornos_papel, _ = cv2.findContours(papel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contornos = list(contornos) + list(contornos_papel)
     altura, largura = cinza.shape
     for contorno in sorted(contornos, key=cv2.contourArea, reverse=True):
         area = cv2.contourArea(contorno) / (altura * largura)
-        if area < 0.15:
+        if area < area_minima:
             break
         poligono = cv2.approxPolyDP(contorno, 0.02 * cv2.arcLength(contorno, True), True)
         if len(poligono) != 4 or not cv2.isContourConvex(poligono):

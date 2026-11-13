@@ -1,4 +1,4 @@
-export function frameBlob(video, maxSize = 1920) {
+export function frameBlob(video, maxSize = 2560) {
   if (!video.videoWidth || !video.videoHeight)
     return Promise.reject(new Error("Aguarde a imagem da câmera."));
   const canvas = document.createElement("canvas");
@@ -14,7 +14,7 @@ export function frameBlob(video, maxSize = 1920) {
       canvas.width = canvas.height = 0;
       if (blob) resolve(blob);
       else reject(new Error("Não foi possível capturar a imagem."));
-    }, "image/png"),
+    }, maxSize > 800 ? "image/jpeg" : "image/png", 0.92),
   );
 }
 
@@ -70,8 +70,8 @@ export class Camera {
         ...(deviceId
           ? { deviceId: { exact: deviceId } }
           : { facingMode: { ideal: "environment" } }),
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 2560 },
+        height: { ideal: 1920 },
       },
     });
     if (generation !== this.generation) {

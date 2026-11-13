@@ -3,7 +3,7 @@
 import base64
 import cv2
 
-from app.services.reconhecimento import binarizar, identificar_grade, identificar_tabelas, ErroLeitura
+from app.services.reconhecimento import alinhar_imagem, binarizar, identificar_grade, identificar_tabelas, ErroLeitura
 
 
 def classificar_questoes(respostas, gabarito):
@@ -17,6 +17,10 @@ def classificar_questoes(respostas, gabarito):
 
 
 def localizar_alternativas(imagem):
+    return _localizar_alternativas_alinhadas(alinhar_imagem(imagem))
+
+
+def _localizar_alternativas_alinhadas(imagem):
     binaria = binarizar(imagem)
     tabelas = identificar_tabelas(binaria)
     posicoes = {}
@@ -40,6 +44,7 @@ def localizar_alternativas(imagem):
 
 def preparar_visualizacao(imagem):
     try:
+        imagem = alinhar_imagem(imagem)
         posicoes = localizar_alternativas(imagem)
     except (ErroLeitura, cv2.error):
         return {"imagem": None, "posicoes": {},
